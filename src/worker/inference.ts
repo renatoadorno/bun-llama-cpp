@@ -54,6 +54,16 @@ export function initModel(
   L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_top_p(sc.topP, 1))
   L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_min_p(sc.minP, 1))
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_top_k(sc.topK))
+
+  // Penalties after top-k/top-p (llama.h: "apply top-k or top-p sampling first")
+  const rp = sc.repeatPenalty ?? 1.1
+  const fp = sc.frequencyPenalty ?? 0.0
+  const pp = sc.presencePenalty ?? 0.0
+  const pn = sc.penaltyLastN ?? 64
+  if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
+    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+  }
+
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
 
