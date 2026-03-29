@@ -6,6 +6,10 @@ const DEFAULT_SAMPLER: SamplerConfig = {
   temp: 0.8,
   minP: 0.05,
   seed: 0xFFFFFFFF,
+  repeatPenalty: 1.1,
+  frequencyPenalty: 0.0,
+  presencePenalty: 0.0,
+  penaltyLastN: 64,
 }
 
 const PRESETS: Record<Preset, ResolvedConfig> = {
