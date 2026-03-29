@@ -74,3 +74,8 @@ await llm.dispose() // Always dispose — frees Metal/GPU buffers
 - **Pointer casting**: FFI pointers use `as unknown as number` — intentional, required by bun:ffi.
 - **Graceful shutdown**: Always call `dispose()`. Direct `worker.terminate()` skips GPU cleanup and causes Metal assertion failures.
 - **Tests are slow**: Tests load a ~5GB model and run inference, so timeouts are 60–180 seconds.
+
+## Git Commit Rules
+
+- **Do NOT** add `Co-authored-by` trailers to commits. All commits are authored solely by the repository owner.
+- Never add any automated attribution trailers (Copilot, AI, etc.).
