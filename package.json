@@ -1,0 +1,59 @@
+{
+  "name": "bun-llama-cpp",
+  "version": "0.1.0",
+  "description": "High-performance FFI bindings from Bun to llama.cpp. Direct dlopen to libllama with zero overhead.",
+  "module": "src/index.ts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/**/*.ts",
+    "src/**/*.c",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:shims": "cc -shared -fPIC -o src/libllama_shims.dylib src/llama_shims.c -I llama.cpp/include -I llama.cpp/ggml/include -undefined dynamic_lookup",
+    "start": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/demo.ts",
+    "dev": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun --hot example/demo.ts",
+    "test": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun test src/llm.worker.test.ts"
+  },
+  "author": "Renato Adorno <renattoadorno@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/renatoadorno/bun-llama-cpp"
+  },
+  "homepage": "https://github.com/renatoadorno/bun-llama-cpp#readme",
+  "bugs": {
+    "url": "https://github.com/renatoadorno/bun-llama-cpp/issues"
+  },
+  "keywords": [
+    "llama",
+    "llama.cpp",
+    "llm",
+    "bun",
+    "ffi",
+    "inference",
+    "metal",
+    "apple-silicon",
+    "gguf"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "optionalDependencies": {
+    "bun-llama-cpp-darwin-arm64": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "llama_cpp_version": "98ae0a0d3 (build 8574)"
+}

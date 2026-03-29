@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+*.dylib
+*.so
+*.o
+*.a
+*.lib
+*.dll
+
+# llama.cpp build output (submodule builds locally)
+llama.cpp/build/
+
+# Model files (large binaries)
+models/
+*.gguf
+*.gguf.etag
+
+# Reference code (third-party, local only)
+referencias/
+
+# Personal notes
+PROMPTS.md
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Bun
+*.bun
+
+# Debug
+*.log

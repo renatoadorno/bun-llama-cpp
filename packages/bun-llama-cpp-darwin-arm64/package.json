@@ -1,0 +1,23 @@
+{
+  "name": "bun-llama-cpp-darwin-arm64",
+  "version": "0.1.0",
+  "description": "macOS Apple Silicon (arm64) prebuilt binaries for bun-llama-cpp",
+  "license": "MIT",
+  "author": "Renato Adorno <renattoadorno@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/renatoadorno/bun-llama-cpp",
+    "directory": "packages/bun-llama-cpp-darwin-arm64"
+  },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": [
+    "*.dylib",
+    "*.metal",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "llama_cpp_version": "98ae0a0d3 (build 8574)"
+}
