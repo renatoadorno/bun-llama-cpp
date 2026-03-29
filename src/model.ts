@@ -140,12 +140,20 @@ export class LlamaModel {
     if (this._disposed) throw new Error('Model has been disposed')
     if (!this._isReady) throw new Error('Model is not ready')
 
+    return this.queue.enqueue(() => this.doGetFimTokens())
+  }
+
+  private doGetFimTokens(): Promise<FimTokens> {
     return new Promise<FimTokens>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('getFimTokens timeout (5s)')), 5_000)
+
       this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const msg = event.data
         if (msg.type === 'fimTokens') {
+          clearTimeout(timer)
           resolve(msg.data)
         } else if (msg.type === 'error') {
+          clearTimeout(timer)
           reject(new Error(msg.message))
         }
       }
