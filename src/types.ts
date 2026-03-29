@@ -31,6 +31,15 @@ export interface InferResult {
   aborted: boolean
 }
 
+export interface FimTokens {
+  pre: number
+  suf: number
+  mid: number
+  pad: number
+  rep: number
+  sep: number
+}
+
 // ── Resolved config (all fields required, used internally) ──────────
 
 export interface ResolvedConfig {
@@ -46,6 +55,7 @@ export interface ResolvedConfig {
 export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array }
+  | { type: 'getFimTokens' }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
@@ -53,4 +63,5 @@ export type WorkerResponse =
   | { type: 'token'; id: string; text: string }
   | { type: 'done'; id: string; tokenCount: number }
   | { type: 'aborted'; id: string }
+  | { type: 'fimTokens'; data: FimTokens }
   | { type: 'error'; id?: string; message: string }
