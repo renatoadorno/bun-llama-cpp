@@ -91,12 +91,13 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const result = runInference(libs.L, libs.S, state, msg.prompt, msg.maxTokens, {
           onToken: (text) => post({ type: 'token', id: msg.id, text }),
           isAborted: () => Atomics.load(abortFlag, 0) === 1,
+          collectMetrics: msg.collectMetrics,
         })
         restoreStderr()
         if (result.aborted) {
           post({ type: 'aborted', id: msg.id })
         } else {
-          post({ type: 'done', id: msg.id, tokenCount: result.tokenCount })
+          post({ type: 'done', id: msg.id, tokenCount: result.tokenCount, metrics: result.metrics })
         }
       } catch (e) {
         restoreStderr()

@@ -1,5 +1,5 @@
 import type { LibLlama, LibShims } from './ffi.ts'
-import type { ResolvedConfig, ModelMetadata } from '../types.ts'
+import type { ResolvedConfig, ModelMetadata, InferMetrics } from '../types.ts'
 import { tokenize, tokenPiece, isEndOfGeneration, isSpecialToken } from './tokenizer.ts'
 
 export interface LlamaState {
@@ -80,6 +80,7 @@ export function collectMetadata(L: LibLlama, modelPtr: number): ModelMetadata {
 export interface InferCallbacks {
   onToken: (text: string) => void
   isAborted: () => boolean
+  collectMetrics: boolean
 }
 
 /** Run inference: prefill prompt tokens then generate up to maxTokens. */
@@ -90,7 +91,7 @@ export function runInference(
   prompt: string,
   maxTokens: number,
   callbacks: InferCallbacks,
-): { tokenCount: number; aborted: boolean } {
+): { tokenCount: number; aborted: boolean; metrics?: InferMetrics } {
   const { ctxPtr, vocabPtr, samplerPtr, batchBuf } = state
   const tokens = tokenize(L, vocabPtr, prompt)
 
@@ -135,7 +136,22 @@ export function runInference(
     pos++
   }
 
-  return { tokenCount, aborted: false }
+  let metrics: InferMetrics | undefined
+  if (callbacks.collectMetrics) {
+    const perfCtx = new Float64Array(4)
+    S.shim_perf_context_get(ctxPtr, perfCtx)
+
+    const promptMs = perfCtx[0]!
+    const generateMs = perfCtx[1]!
+    const promptTokens = perfCtx[2]!
+    const generatedTokens = perfCtx[3]!
+    const tokensPerSec = generateMs > 0 ? generatedTokens / (generateMs / 1000) : 0
+
+    metrics = { promptTokens, generatedTokens, promptMs, generateMs, tokensPerSec }
+    L.llama_perf_context_reset(ctxPtr)
+  }
+
+  return { tokenCount, aborted: false, metrics }
 }
 
 /** Free all llama resources (GPU buffers, model, context). */
