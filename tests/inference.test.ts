@@ -39,3 +39,34 @@ describe('performance metrics', () => {
     expect(result.metrics).toBeUndefined()
   }, 60_000)
 })
+
+describe('repetition penalties', () => {
+  test('penalties config is accepted and affects output', async () => {
+    const prompt = 'Repeat the word "hello" as many times as you can:'
+
+    // Run without penalties (disabled)
+    const noPenalty = await LlamaModel.load(MODEL_PATH, {
+      preset: 'small',
+      sampler: { repeatPenalty: 1.0, frequencyPenalty: 0.0, presencePenalty: 0.0 },
+    })
+    const resultNoPenalty = await noPenalty.infer(prompt, {
+      onToken: () => {},
+      maxTokens: 50,
+    })
+    await noPenalty.dispose()
+
+    // Run with strong penalties
+    const withPenalty = await LlamaModel.load(MODEL_PATH, {
+      preset: 'small',
+      sampler: { repeatPenalty: 2.0, frequencyPenalty: 1.0, presencePenalty: 1.0 },
+    })
+    const resultWithPenalty = await withPenalty.infer(prompt, {
+      onToken: () => {},
+      maxTokens: 50,
+    })
+    await withPenalty.dispose()
+
+    // With strong penalties, output should be different (less repetitive)
+    expect(resultNoPenalty.text).not.toBe(resultWithPenalty.text)
+  }, 300_000)
+})
