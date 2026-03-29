@@ -80,6 +80,51 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       break
     }
 
+    case 'applyTemplate': {
+      if (!libs || !state) {
+        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      try {
+        // Pack messages as null-separated pairs: "role\0content\0role\0content\0"
+        const parts: string[] = []
+        for (const m of msg.messages) {
+          parts.push(m.role + '\0' + m.content + '\0')
+        }
+        const packed = Buffer.from(parts.join(''), 'utf8')
+
+        // Template pointer: use model's built-in or null for chatml default
+        const tmplPtr = state.chatTemplatePtr
+
+        // First call: get required buffer size
+        const needed = libs.S.shim_chat_apply_template(
+          tmplPtr ? (tmplPtr as unknown as Buffer) : null,
+          packed,
+          msg.messages.length,
+          msg.addAssistant,
+          Buffer.alloc(0),
+          0,
+        )
+
+        // Second call: fill buffer
+        const buf = Buffer.alloc(needed + 1)
+        libs.S.shim_chat_apply_template(
+          tmplPtr ? (tmplPtr as unknown as Buffer) : null,
+          packed,
+          msg.messages.length,
+          msg.addAssistant,
+          buf,
+          buf.length,
+        )
+
+        const text = buf.subarray(0, needed).toString('utf8')
+        post({ type: 'templateResult', id: msg.id, text })
+      } catch (e) {
+        post({ type: 'error', id: msg.id, message: String(e) })
+      }
+      break
+    }
+
     case 'infer': {
       if (!libs || !state) {
         post({ type: 'error', id: msg.id, message: 'Worker not initialized' })

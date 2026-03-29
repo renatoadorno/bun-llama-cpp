@@ -8,6 +8,7 @@ export interface LlamaState {
   vocabPtr: number
   samplerPtr: number
   batchBuf: Buffer
+  chatTemplatePtr: number
 }
 
 /** Initialize llama backend, load model, create context and sampler. */
@@ -31,6 +32,7 @@ export function initModel(
   if (!modelPtr) throw new Error(`Failed to load model: ${modelPath}`)
 
   const vocabPtr = L.llama_model_get_vocab(modelPtr)
+  const chatTemplatePtr = L.llama_model_chat_template(modelPtr, null as unknown as number)
 
   // Context params
   const cpBuf = Buffer.alloc(Number(S.shim_sizeof_context_params()))
@@ -67,7 +69,7 @@ export function initModel(
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
 
-  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf }
+  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf, chatTemplatePtr }
 }
 
 /** Collect model metadata from loaded model. */
