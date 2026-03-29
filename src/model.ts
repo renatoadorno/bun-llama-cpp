@@ -5,6 +5,7 @@ import type {
   InferOptions,
   InferResult,
   FimTokens,
+  ModelMetadata,
   WorkerRequest,
   WorkerResponse,
 } from './types.ts'
@@ -15,6 +16,7 @@ export class LlamaModel {
   private _isReady = false
   private _isBusy = false
   private _disposed = false
+  private _metadata!: ModelMetadata
 
   private constructor(worker: Worker) {
     this.worker = worker
@@ -33,6 +35,7 @@ export class LlamaModel {
         const msg = event.data
         if (msg.type === 'ready') {
           clearTimeout(timer)
+          instance._metadata = msg.metadata
           instance._isReady = true
           resolve()
         } else if (msg.type === 'error') {
@@ -134,6 +137,9 @@ export class LlamaModel {
 
   get isReady(): boolean { return this._isReady && !this._disposed }
   get isBusy(): boolean { return this._isBusy }
+
+  /** Model metadata — populated during load(). */
+  get metadata(): ModelMetadata { return this._metadata }
 
   /** Get Fill-in-Middle token IDs. Returns -1 for unsupported tokens. */
   async getFimTokens(): Promise<FimTokens> {

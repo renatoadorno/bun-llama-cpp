@@ -7,4 +7,5 @@ export type {
   InferOptions,
   InferResult,
   FimTokens,
+  ModelMetadata,
 } from './types.ts'
