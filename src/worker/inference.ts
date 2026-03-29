@@ -62,8 +62,10 @@ export function initModel(
 
 /** Collect model metadata from loaded model. */
 export function collectMetadata(L: LibLlama, modelPtr: number): ModelMetadata {
-  const descBuf = Buffer.alloc(256)
-  const descLen = L.llama_model_desc(modelPtr, descBuf, 256)
+  const BUF_SIZE = 256
+  const descBuf = Buffer.alloc(BUF_SIZE)
+  const rawLen = L.llama_model_desc(modelPtr, descBuf, BUF_SIZE)
+  const descLen = Math.min(rawLen, BUF_SIZE - 1)
 
   return {
     nParams: Number(L.llama_model_n_params(modelPtr)),
