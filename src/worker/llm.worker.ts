@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from 'bun:ffi'
 import type { WorkerRequest, WorkerResponse } from '../types.ts'
 import { openLibraries } from './ffi.ts'
-import { initModel, runInference, cleanup, type LlamaState } from './inference.ts'
+import { initModel, runInference, cleanup, collectMetadata, type LlamaState } from './inference.ts'
 import { resolveLibPaths } from '../lib-resolver.ts'
 
 declare var self: Worker
@@ -51,7 +51,8 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         libs = openLibraries(LIBLLAMA, LIBSHIMS)
         state = initModel(libs.L, libs.S, msg.modelPath, msg.config)
         restoreStderr()
-        post({ type: 'ready' })
+        const metadata = collectMetadata(libs.L, state.modelPtr)
+        post({ type: 'ready', metadata })
       } catch (e) {
         restoreStderr()
         post({ type: 'error', message: String(e) })

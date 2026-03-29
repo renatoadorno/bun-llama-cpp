@@ -1,5 +1,5 @@
 import type { LibLlama, LibShims } from './ffi.ts'
-import type { ResolvedConfig } from '../types.ts'
+import type { ResolvedConfig, ModelMetadata } from '../types.ts'
 import { tokenize, tokenPiece, isEndOfGeneration, isSpecialToken } from './tokenizer.ts'
 
 export interface LlamaState {
@@ -58,6 +58,21 @@ export function initModel(
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
 
   return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf }
+}
+
+/** Collect model metadata from loaded model. */
+export function collectMetadata(L: LibLlama, modelPtr: number): ModelMetadata {
+  const descBuf = Buffer.alloc(256)
+  const descLen = L.llama_model_desc(modelPtr, descBuf, 256)
+
+  return {
+    nParams: Number(L.llama_model_n_params(modelPtr)),
+    nEmbd: L.llama_model_n_embd(modelPtr),
+    nCtxTrain: L.llama_model_n_ctx_train(modelPtr),
+    nLayers: L.llama_model_n_layer(modelPtr),
+    desc: descBuf.subarray(0, descLen).toString('utf8'),
+    sizeBytes: Number(L.llama_model_size(modelPtr)),
+  }
 }
 
 export interface InferCallbacks {
