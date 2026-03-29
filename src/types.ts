@@ -63,6 +63,11 @@ export interface InferMetrics {
   tokensPerSec: number
 }
 
+export interface ChatMessage {
+  role: string
+  content: string
+}
+
 // ── Resolved config (all fields required, used internally) ──────────
 
 export interface ResolvedConfig {
@@ -79,6 +84,7 @@ export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
+  | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
@@ -87,4 +93,5 @@ export type WorkerResponse =
   | { type: 'done'; id: string; tokenCount: number; metrics?: InferMetrics }
   | { type: 'aborted'; id: string }
   | { type: 'fimTokens'; data: FimTokens }
+  | { type: 'templateResult'; id: string; text: string }
   | { type: 'error'; id?: string; message: string }
