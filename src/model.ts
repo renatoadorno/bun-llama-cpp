@@ -100,6 +100,7 @@ export class LlamaModel {
               text: chunks.join(''),
               tokenCount: msg.tokenCount,
               aborted: false,
+              metrics: msg.metrics,
             })
             break
           }
@@ -130,6 +131,7 @@ export class LlamaModel {
         prompt,
         maxTokens: options.maxTokens ?? 512,
         abortFlag,
+        collectMetrics: options.metrics ?? false,
       }
       this.worker.postMessage(inferMsg)
     })
