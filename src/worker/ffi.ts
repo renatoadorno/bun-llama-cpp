@@ -20,6 +20,13 @@ export interface LibLlama {
   llama_vocab_fim_rep: (vocab: number) => number
   llama_vocab_fim_sep: (vocab: number) => number
 
+  llama_model_n_params: (model: number) => number
+  llama_model_n_embd: (model: number) => number
+  llama_model_n_ctx_train: (model: number) => number
+  llama_model_n_layer: (model: number) => number
+  llama_model_size: (model: number) => number
+  llama_model_desc: (model: number, buf: Buffer, bufSize: number) => number
+
   llama_tokenize: (
     vocab: number, text: Buffer, textLen: number,
     tokens: Int32Array, nTokensMax: number,
@@ -97,6 +104,13 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_vocab_fim_pad: { args: [FFIType.ptr], returns: FFIType.i32 },
     llama_vocab_fim_rep: { args: [FFIType.ptr], returns: FFIType.i32 },
     llama_vocab_fim_sep: { args: [FFIType.ptr], returns: FFIType.i32 },
+
+    llama_model_n_params:    { args: [FFIType.ptr],                              returns: FFIType.u64 },
+    llama_model_n_embd:      { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_n_ctx_train: { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_n_layer:     { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_size:        { args: [FFIType.ptr],                              returns: FFIType.u64 },
+    llama_model_desc:        { args: [FFIType.ptr, FFIType.ptr, FFIType.u64],    returns: FFIType.i32 },
 
     llama_tokenize: {
       args: [
