@@ -6,6 +6,7 @@ import type {
   InferResult,
   FimTokens,
   ModelMetadata,
+  ChatMessage,
   WorkerRequest,
   WorkerResponse,
 } from './types.ts'
@@ -166,6 +167,46 @@ export class LlamaModel {
         }
       }
       const req: WorkerRequest = { type: 'getFimTokens' }
+      this.worker.postMessage(req)
+    })
+  }
+
+  /** Apply the model's chat template to format messages into a prompt string. */
+  async applyTemplate(
+    messages: ChatMessage[],
+    options?: { addAssistant?: boolean },
+  ): Promise<string> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+
+    return this.queue.enqueue(() => this.doApplyTemplate(messages, options))
+  }
+
+  private doApplyTemplate(
+    messages: ChatMessage[],
+    options?: { addAssistant?: boolean },
+  ): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => reject(new Error('applyTemplate timeout (5s)')), 5_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'templateResult' && msg.id === id) {
+          clearTimeout(timer)
+          resolve(msg.text)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+
+      const req: WorkerRequest = {
+        type: 'applyTemplate',
+        id,
+        messages,
+        addAssistant: options?.addAssistant ?? true,
+      }
       this.worker.postMessage(req)
     })
   }

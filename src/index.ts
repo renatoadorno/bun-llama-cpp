@@ -9,4 +9,5 @@ export type {
   InferMetrics,
   FimTokens,
   ModelMetadata,
+  ChatMessage,
 } from './types.ts'
