@@ -8,6 +8,10 @@ export interface SamplerConfig {
   temp: number
   minP: number
   seed: number
+  repeatPenalty?: number
+  frequencyPenalty?: number
+  presencePenalty?: number
+  penaltyLastN?: number
 }
 
 export interface ModelConfig {
