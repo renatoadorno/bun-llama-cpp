@@ -26,6 +26,7 @@ export interface LibLlama {
   llama_model_n_layer: (model: number) => number
   llama_model_size: (model: number) => number
   llama_model_desc: (model: number, buf: Buffer, bufSize: number) => number
+  llama_model_chat_template: (model: number, name: number | null) => number
 
   llama_tokenize: (
     vocab: number, text: Buffer, textLen: number,
@@ -84,6 +85,8 @@ export interface LibShims {
 
   shim_perf_context_get: (ctx: number, out: Float64Array) => void
   shim_perf_sampler_get: (chain: number, out: Float64Array) => void
+
+  shim_chat_apply_template: (tmpl: Buffer | null, messagesPacked: Buffer, nMsg: number, addAss: boolean, buf: Buffer, length: number) => number
 }
 
 /**
@@ -117,6 +120,7 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_model_n_layer:     { args: [FFIType.ptr],                              returns: FFIType.i32 },
     llama_model_size:        { args: [FFIType.ptr],                              returns: FFIType.u64 },
     llama_model_desc:        { args: [FFIType.ptr, FFIType.ptr, FFIType.u64],    returns: FFIType.i32 },
+    llama_model_chat_template: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
 
     llama_tokenize: {
       args: [
@@ -184,6 +188,11 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
 
     shim_perf_context_get:  { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     shim_perf_sampler_get:  { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+
+    shim_chat_apply_template: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.bool, FFIType.ptr, FFIType.i32],
+      returns: FFIType.i32,
+    },
   })
 
   // Cast to typed interfaces — the `as unknown as number` pattern is required by bun:ffi
