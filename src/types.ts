@@ -40,6 +40,15 @@ export interface FimTokens {
   sep: number
 }
 
+export interface ModelMetadata {
+  nParams: number
+  nEmbd: number
+  nCtxTrain: number
+  nLayers: number
+  desc: string
+  sizeBytes: number
+}
+
 // ── Resolved config (all fields required, used internally) ──────────
 
 export interface ResolvedConfig {
@@ -59,7 +68,7 @@ export type WorkerRequest =
   | { type: 'shutdown' }
 
 export type WorkerResponse =
-  | { type: 'ready' }
+  | { type: 'ready'; metadata: ModelMetadata }
   | { type: 'token'; id: string; text: string }
   | { type: 'done'; id: string; tokenCount: number }
   | { type: 'aborted'; id: string }
