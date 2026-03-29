@@ -13,6 +13,13 @@ export interface LibLlama {
   llama_vocab_eot: (vocab: number) => number
   llama_vocab_is_eog: (vocab: number, token: number) => boolean
 
+  llama_vocab_fim_pre: (vocab: number) => number
+  llama_vocab_fim_suf: (vocab: number) => number
+  llama_vocab_fim_mid: (vocab: number) => number
+  llama_vocab_fim_pad: (vocab: number) => number
+  llama_vocab_fim_rep: (vocab: number) => number
+  llama_vocab_fim_sep: (vocab: number) => number
+
   llama_tokenize: (
     vocab: number, text: Buffer, textLen: number,
     tokens: Int32Array, nTokensMax: number,
@@ -83,6 +90,13 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_vocab_eos:         { args: [FFIType.ptr],              returns: FFIType.i32  },
     llama_vocab_eot:         { args: [FFIType.ptr],              returns: FFIType.i32  },
     llama_vocab_is_eog:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.bool },
+
+    llama_vocab_fim_pre: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_suf: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_mid: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_pad: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_rep: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_sep: { args: [FFIType.ptr], returns: FFIType.i32 },
 
     llama_tokenize: {
       args: [
