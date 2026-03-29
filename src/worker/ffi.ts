@@ -50,6 +50,8 @@ export interface LibLlama {
   llama_sampler_accept: (chain: number, token: number) => void
   llama_sampler_reset: (chain: number) => void
   llama_sampler_free: (chain: number) => void
+
+  llama_perf_context_reset: (ctx: number) => void
 }
 
 export interface LibShims {
@@ -78,6 +80,9 @@ export interface LibShims {
   shim_sampler_chain_init: (buf: Buffer) => number
   shim_sampler_init_top_p: (p: number, minKeep: number) => number
   shim_sampler_init_min_p: (p: number, minKeep: number) => number
+
+  shim_perf_context_get: (ctx: number, out: Float64Array) => void
+  shim_perf_sampler_get: (chain: number, out: Float64Array) => void
 }
 
 /**
@@ -141,6 +146,8 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_sampler_accept:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
     llama_sampler_reset:       { args: [FFIType.ptr],              returns: FFIType.void },
     llama_sampler_free:        { args: [FFIType.ptr],              returns: FFIType.void },
+
+    llama_perf_context_reset: { args: [FFIType.ptr], returns: FFIType.void },
   })
 
   const { symbols: S } = dlopen(libShimsPath, {
@@ -172,6 +179,9 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_sampler_chain_init: { args: [FFIType.ptr],              returns: FFIType.ptr },
     shim_sampler_init_top_p: { args: [FFIType.f32, FFIType.i32], returns: FFIType.ptr },
     shim_sampler_init_min_p: { args: [FFIType.f32, FFIType.i32], returns: FFIType.ptr },
+
+    shim_perf_context_get:  { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+    shim_perf_sampler_get:  { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
   })
 
   // Cast to typed interfaces — the `as unknown as number` pattern is required by bun:ffi
