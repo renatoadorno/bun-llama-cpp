@@ -46,6 +46,7 @@ export interface LibLlama {
   llama_sampler_init_top_k: (k: number) => number
   llama_sampler_init_temp: (temp: number) => number
   llama_sampler_init_dist: (seed: number) => number
+  llama_sampler_init_penalties: (penaltyLastN: number, repeatPenalty: number, frequencyPenalty: number, presencePenalty: number) => number
   llama_sampler_sample: (chain: number, ctx: number, idx: number) => number
   llama_sampler_accept: (chain: number, token: number) => void
   llama_sampler_reset: (chain: number) => void
@@ -141,8 +142,9 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_sampler_init_greedy: { args: [],                         returns: FFIType.ptr  },
     llama_sampler_init_top_k:  { args: [FFIType.i32],              returns: FFIType.ptr  },
     llama_sampler_init_temp:   { args: [FFIType.f32],              returns: FFIType.ptr  },
-    llama_sampler_init_dist:   { args: [FFIType.u32],              returns: FFIType.ptr  },
-    llama_sampler_sample:      { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+    llama_sampler_init_dist:       { args: [FFIType.u32],              returns: FFIType.ptr  },
+    llama_sampler_init_penalties:  { args: [FFIType.i32, FFIType.f32, FFIType.f32, FFIType.f32], returns: FFIType.ptr },
+    llama_sampler_sample:          { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
     llama_sampler_accept:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
     llama_sampler_reset:       { args: [FFIType.ptr],              returns: FFIType.void },
     llama_sampler_free:        { args: [FFIType.ptr],              returns: FFIType.void },
