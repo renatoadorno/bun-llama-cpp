@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include "llama.h"
 
 /* ── Size queries ──────────────────────────────────────────────────── */
@@ -116,4 +117,36 @@ void shim_perf_sampler_get(const struct llama_sampler *chain, double *out) {
     struct llama_perf_sampler_data d = llama_perf_sampler(chain);
     out[0] = d.t_sample_ms;
     out[1] = (double)d.n_sample;
+}
+
+/* ── Chat templates ───────────────────────────────────────────────── */
+
+#include <string.h>
+
+/*
+ * Wraps llama_chat_apply_template — accepts packed null-separated message pairs
+ * instead of llama_chat_message array (easier for bun:ffi).
+ *
+ * messages_packed format: "role1\0content1\0role2\0content2\0..."
+ *
+ * Returns number of bytes written to buf, or required size if buf is too small.
+ */
+int32_t shim_chat_apply_template(
+    const char *tmpl,
+    const char *messages_packed,
+    int32_t n_msg,
+    bool add_ass,
+    char *buf,
+    int32_t length
+) {
+    struct llama_chat_message *msgs =
+        (struct llama_chat_message *)alloca((size_t)n_msg * sizeof(struct llama_chat_message));
+    const char *p = messages_packed;
+    for (int32_t i = 0; i < n_msg; i++) {
+        msgs[i].role = p;
+        p += strlen(p) + 1;
+        msgs[i].content = p;
+        p += strlen(p) + 1;
+    }
+    return llama_chat_apply_template(tmpl, msgs, (size_t)n_msg, add_ass, buf, length);
 }
