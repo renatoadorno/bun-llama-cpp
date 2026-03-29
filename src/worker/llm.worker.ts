@@ -59,6 +59,26 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       break
     }
 
+    case 'getFimTokens': {
+      if (!libs || !state) {
+        post({ type: 'error', message: 'Worker not initialized' })
+        break
+      }
+      const vocab = state.vocabPtr
+      post({
+        type: 'fimTokens',
+        data: {
+          pre: libs.L.llama_vocab_fim_pre(vocab),
+          suf: libs.L.llama_vocab_fim_suf(vocab),
+          mid: libs.L.llama_vocab_fim_mid(vocab),
+          pad: libs.L.llama_vocab_fim_pad(vocab),
+          rep: libs.L.llama_vocab_fim_rep(vocab),
+          sep: libs.L.llama_vocab_fim_sep(vocab),
+        },
+      })
+      break
+    }
+
     case 'infer': {
       if (!libs || !state) {
         post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
