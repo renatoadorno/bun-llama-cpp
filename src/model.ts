@@ -4,6 +4,7 @@ import type {
   ModelConfig,
   InferOptions,
   InferResult,
+  FimTokens,
   WorkerRequest,
   WorkerResponse,
 } from './types.ts'
@@ -133,6 +134,25 @@ export class LlamaModel {
 
   get isReady(): boolean { return this._isReady && !this._disposed }
   get isBusy(): boolean { return this._isBusy }
+
+  /** Get Fill-in-Middle token IDs. Returns -1 for unsupported tokens. */
+  async getFimTokens(): Promise<FimTokens> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+
+    return new Promise<FimTokens>((resolve, reject) => {
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'fimTokens') {
+          resolve(msg.data)
+        } else if (msg.type === 'error') {
+          reject(new Error(msg.message))
+        }
+      }
+      const req: WorkerRequest = { type: 'getFimTokens' }
+      this.worker.postMessage(req)
+    })
+  }
 
   /** Graceful shutdown — frees GPU/Metal buffers before terminating. */
   async dispose(): Promise<void> {

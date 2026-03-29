@@ -6,4 +6,5 @@ export type {
   SamplerConfig,
   InferOptions,
   InferResult,
+  FimTokens,
 } from './types.ts'
