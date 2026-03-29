@@ -23,12 +23,14 @@ export interface InferOptions {
   onToken: (text: string) => void
   maxTokens?: number
   signal?: AbortSignal
+  metrics?: boolean
 }
 
 export interface InferResult {
   text: string
   tokenCount: number
   aborted: boolean
+  metrics?: InferMetrics
 }
 
 export interface FimTokens {
@@ -49,6 +51,14 @@ export interface ModelMetadata {
   sizeBytes: number
 }
 
+export interface InferMetrics {
+  promptTokens: number
+  generatedTokens: number
+  promptMs: number
+  generateMs: number
+  tokensPerSec: number
+}
+
 // ── Resolved config (all fields required, used internally) ──────────
 
 export interface ResolvedConfig {
@@ -63,14 +73,14 @@ export interface ResolvedConfig {
 
 export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
-  | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array }
+  | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
   | { type: 'ready'; metadata: ModelMetadata }
   | { type: 'token'; id: string; text: string }
-  | { type: 'done'; id: string; tokenCount: number }
+  | { type: 'done'; id: string; tokenCount: number; metrics?: InferMetrics }
   | { type: 'aborted'; id: string }
   | { type: 'fimTokens'; data: FimTokens }
   | { type: 'error'; id?: string; message: string }
