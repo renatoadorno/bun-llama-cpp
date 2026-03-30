@@ -82,7 +82,7 @@ export interface LibShims {
   shim_sampler_init_top_p: (p: number, minKeep: number) => number
   shim_sampler_init_min_p: (p: number, minKeep: number) => number
 
-  shim_chat_apply_template: (tmpl: Buffer | null, messagesPacked: Buffer, nMsg: number, addAss: boolean, buf: Buffer, length: number) => number
+  shim_chat_apply_template: (tmpl: number | null, messagesPacked: Buffer, nMsg: number, addAss: boolean, buf: Buffer, length: number) => number
 }
 
 /**

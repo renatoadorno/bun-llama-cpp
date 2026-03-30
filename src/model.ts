@@ -178,6 +178,12 @@ export class LlamaModel {
   ): Promise<string> {
     if (this._disposed) throw new Error('Model has been disposed')
     if (!this._isReady) throw new Error('Model is not ready')
+    if (messages.length === 0) throw new Error('messages must not be empty')
+    if (messages.length > 1024) throw new Error('messages must not exceed 1024 entries')
+    for (const m of messages) {
+      if (m.role.includes('\0') || m.content.includes('\0'))
+        throw new Error('message role and content must not contain NUL characters')
+    }
 
     return this.queue.enqueue(() => this.doApplyTemplate(messages, options))
   }

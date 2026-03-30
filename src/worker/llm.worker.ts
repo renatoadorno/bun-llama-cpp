@@ -86,6 +86,11 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
+        if (msg.messages.length === 0 || msg.messages.length > 1024) {
+          post({ type: 'error', id: msg.id, message: `Invalid message count: ${msg.messages.length} (must be 1–1024)` })
+          break
+        }
+
         // Pack messages as null-separated pairs: "role\0content\0role\0content\0"
         const parts: string[] = []
         for (const m of msg.messages) {
@@ -98,7 +103,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 
         // First call: get required buffer size
         const needed = libs.S.shim_chat_apply_template(
-          tmplPtr ? (tmplPtr as unknown as Buffer) : null,
+          tmplPtr || null,
           packed,
           msg.messages.length,
           msg.addAssistant,
@@ -114,7 +119,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         // Second call: fill buffer
         const buf = Buffer.alloc(needed + 1)
         libs.S.shim_chat_apply_template(
-          tmplPtr ? (tmplPtr as unknown as Buffer) : null,
+          tmplPtr || null,
           packed,
           msg.messages.length,
           msg.addAssistant,

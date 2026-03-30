@@ -92,6 +92,7 @@ struct llama_sampler *shim_sampler_init_min_p(float p, int32_t min_keep) {
 /* ── Chat templates ───────────────────────────────────────────────── */
 
 #include <string.h>
+#include <alloca.h>
 
 /*
  * Wraps llama_chat_apply_template — accepts packed null-separated message pairs

@@ -117,13 +117,13 @@ export function runInference(
   for (let i = 0; i < tokens.length; i++) {
     S.shim_batch_add(batchBuf, tokens[i]!, i, 0, i === tokens.length - 1)
   }
-  const prefillStart = performance.now()
+  const prefillStart = callbacks.collectMetrics ? performance.now() : 0
   const rc = S.shim_decode(ctxPtr, batchBuf)
   if (rc !== 0) throw new Error(`llama_decode (prefill) failed: ${rc}`)
-  const prefillMs = performance.now() - prefillStart
+  const prefillMs = callbacks.collectMetrics ? performance.now() - prefillStart : 0
 
   // Generation loop
-  const generateStart = performance.now()
+  const generateStart = callbacks.collectMetrics ? performance.now() : 0
   let pos = tokens.length
   let tokenCount = 0
 
