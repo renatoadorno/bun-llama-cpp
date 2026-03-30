@@ -31,7 +31,7 @@ describe('metadata', () => {
   test('metadata has expected values for Qwen3-8B', () => {
     const meta = llm.metadata
 
-    expect(meta.nLayers).toBe(32)
+    expect(meta.nLayers).toBe(36)
     expect(meta.nEmbd).toBe(4096)
     expect(meta.desc).toContain('Q4_K')
   })
