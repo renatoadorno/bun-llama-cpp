@@ -13,6 +13,21 @@ export interface LibLlama {
   llama_vocab_eot: (vocab: number) => number
   llama_vocab_is_eog: (vocab: number, token: number) => boolean
 
+  llama_vocab_fim_pre: (vocab: number) => number
+  llama_vocab_fim_suf: (vocab: number) => number
+  llama_vocab_fim_mid: (vocab: number) => number
+  llama_vocab_fim_pad: (vocab: number) => number
+  llama_vocab_fim_rep: (vocab: number) => number
+  llama_vocab_fim_sep: (vocab: number) => number
+
+  llama_model_n_params: (model: number) => number
+  llama_model_n_embd: (model: number) => number
+  llama_model_n_ctx_train: (model: number) => number
+  llama_model_n_layer: (model: number) => number
+  llama_model_size: (model: number) => number
+  llama_model_desc: (model: number, buf: Buffer, bufSize: number) => number
+  llama_model_chat_template: (model: number, name: number | null) => number
+
   llama_tokenize: (
     vocab: number, text: Buffer, textLen: number,
     tokens: Int32Array, nTokensMax: number,
@@ -32,10 +47,12 @@ export interface LibLlama {
   llama_sampler_init_top_k: (k: number) => number
   llama_sampler_init_temp: (temp: number) => number
   llama_sampler_init_dist: (seed: number) => number
+  llama_sampler_init_penalties: (penaltyLastN: number, repeatPenalty: number, frequencyPenalty: number, presencePenalty: number) => number
   llama_sampler_sample: (chain: number, ctx: number, idx: number) => number
   llama_sampler_accept: (chain: number, token: number) => void
   llama_sampler_reset: (chain: number) => void
   llama_sampler_free: (chain: number) => void
+
 }
 
 export interface LibShims {
@@ -64,6 +81,8 @@ export interface LibShims {
   shim_sampler_chain_init: (buf: Buffer) => number
   shim_sampler_init_top_p: (p: number, minKeep: number) => number
   shim_sampler_init_min_p: (p: number, minKeep: number) => number
+
+  shim_chat_apply_template: (tmpl: number | null, messagesPacked: Buffer, nMsg: number, addAss: boolean, buf: Buffer, length: number) => number
 }
 
 /**
@@ -83,6 +102,21 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_vocab_eos:         { args: [FFIType.ptr],              returns: FFIType.i32  },
     llama_vocab_eot:         { args: [FFIType.ptr],              returns: FFIType.i32  },
     llama_vocab_is_eog:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.bool },
+
+    llama_vocab_fim_pre: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_suf: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_mid: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_pad: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_rep: { args: [FFIType.ptr], returns: FFIType.i32 },
+    llama_vocab_fim_sep: { args: [FFIType.ptr], returns: FFIType.i32 },
+
+    llama_model_n_params:    { args: [FFIType.ptr],                              returns: FFIType.u64 },
+    llama_model_n_embd:      { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_n_ctx_train: { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_n_layer:     { args: [FFIType.ptr],                              returns: FFIType.i32 },
+    llama_model_size:        { args: [FFIType.ptr],                              returns: FFIType.u64 },
+    llama_model_desc:        { args: [FFIType.ptr, FFIType.ptr, FFIType.u64],    returns: FFIType.i32 },
+    llama_model_chat_template: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
 
     llama_tokenize: {
       args: [
@@ -108,11 +142,13 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_sampler_init_greedy: { args: [],                         returns: FFIType.ptr  },
     llama_sampler_init_top_k:  { args: [FFIType.i32],              returns: FFIType.ptr  },
     llama_sampler_init_temp:   { args: [FFIType.f32],              returns: FFIType.ptr  },
-    llama_sampler_init_dist:   { args: [FFIType.u32],              returns: FFIType.ptr  },
-    llama_sampler_sample:      { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+    llama_sampler_init_dist:       { args: [FFIType.u32],              returns: FFIType.ptr  },
+    llama_sampler_init_penalties:  { args: [FFIType.i32, FFIType.f32, FFIType.f32, FFIType.f32], returns: FFIType.ptr },
+    llama_sampler_sample:          { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
     llama_sampler_accept:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
     llama_sampler_reset:       { args: [FFIType.ptr],              returns: FFIType.void },
     llama_sampler_free:        { args: [FFIType.ptr],              returns: FFIType.void },
+
   })
 
   const { symbols: S } = dlopen(libShimsPath, {
@@ -144,6 +180,11 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_sampler_chain_init: { args: [FFIType.ptr],              returns: FFIType.ptr },
     shim_sampler_init_top_p: { args: [FFIType.f32, FFIType.i32], returns: FFIType.ptr },
     shim_sampler_init_min_p: { args: [FFIType.f32, FFIType.i32], returns: FFIType.ptr },
+
+    shim_chat_apply_template: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.bool, FFIType.ptr, FFIType.i32],
+      returns: FFIType.i32,
+    },
   })
 
   // Cast to typed interfaces — the `as unknown as number` pattern is required by bun:ffi

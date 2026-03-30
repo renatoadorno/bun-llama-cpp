@@ -1,5 +1,5 @@
 import type { LibLlama, LibShims } from './ffi.ts'
-import type { ResolvedConfig } from '../types.ts'
+import type { ResolvedConfig, ModelMetadata, InferMetrics } from '../types.ts'
 import { tokenize, tokenPiece, isEndOfGeneration, isSpecialToken } from './tokenizer.ts'
 
 export interface LlamaState {
@@ -8,6 +8,7 @@ export interface LlamaState {
   vocabPtr: number
   samplerPtr: number
   batchBuf: Buffer
+  chatTemplatePtr: number
 }
 
 /** Initialize llama backend, load model, create context and sampler. */
@@ -31,6 +32,7 @@ export function initModel(
   if (!modelPtr) throw new Error(`Failed to load model: ${modelPath}`)
 
   const vocabPtr = L.llama_model_get_vocab(modelPtr)
+  const chatTemplatePtr = L.llama_model_chat_template(modelPtr, null as unknown as number)
 
   // Context params
   const cpBuf = Buffer.alloc(Number(S.shim_sizeof_context_params()))
@@ -54,15 +56,43 @@ export function initModel(
   L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_top_p(sc.topP, 1))
   L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_min_p(sc.minP, 1))
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_top_k(sc.topK))
+
+  // Penalties after top-k/top-p (llama.h: "apply top-k or top-p sampling first")
+  const rp = sc.repeatPenalty ?? 1.1
+  const fp = sc.frequencyPenalty ?? 0.0
+  const pp = sc.presencePenalty ?? 0.0
+  const pn = sc.penaltyLastN ?? 64
+  if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
+    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+  }
+
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
   L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
 
-  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf }
+  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf, chatTemplatePtr }
+}
+
+/** Collect model metadata from loaded model. */
+export function collectMetadata(L: LibLlama, modelPtr: number): ModelMetadata {
+  const BUF_SIZE = 256
+  const descBuf = Buffer.alloc(BUF_SIZE)
+  const rawLen = L.llama_model_desc(modelPtr, descBuf, BUF_SIZE)
+  const descLen = Math.min(rawLen, BUF_SIZE - 1)
+
+  return {
+    nParams: Number(L.llama_model_n_params(modelPtr)),
+    nEmbd: L.llama_model_n_embd(modelPtr),
+    nCtxTrain: L.llama_model_n_ctx_train(modelPtr),
+    nLayers: L.llama_model_n_layer(modelPtr),
+    desc: descBuf.subarray(0, descLen).toString('utf8'),
+    sizeBytes: Number(L.llama_model_size(modelPtr)),
+  }
 }
 
 export interface InferCallbacks {
   onToken: (text: string) => void
   isAborted: () => boolean
+  collectMetrics: boolean
 }
 
 /** Run inference: prefill prompt tokens then generate up to maxTokens. */
@@ -73,7 +103,7 @@ export function runInference(
   prompt: string,
   maxTokens: number,
   callbacks: InferCallbacks,
-): { tokenCount: number; aborted: boolean } {
+): { tokenCount: number; aborted: boolean; metrics?: InferMetrics } {
   const { ctxPtr, vocabPtr, samplerPtr, batchBuf } = state
   const tokens = tokenize(L, vocabPtr, prompt)
 
@@ -87,10 +117,13 @@ export function runInference(
   for (let i = 0; i < tokens.length; i++) {
     S.shim_batch_add(batchBuf, tokens[i]!, i, 0, i === tokens.length - 1)
   }
+  const prefillStart = callbacks.collectMetrics ? performance.now() : 0
   const rc = S.shim_decode(ctxPtr, batchBuf)
   if (rc !== 0) throw new Error(`llama_decode (prefill) failed: ${rc}`)
+  const prefillMs = callbacks.collectMetrics ? performance.now() - prefillStart : 0
 
   // Generation loop
+  const generateStart = callbacks.collectMetrics ? performance.now() : 0
   let pos = tokens.length
   let tokenCount = 0
 
@@ -118,7 +151,17 @@ export function runInference(
     pos++
   }
 
-  return { tokenCount, aborted: false }
+  let metrics: InferMetrics | undefined
+  if (callbacks.collectMetrics) {
+    const generateMs = performance.now() - generateStart
+    const promptTokens = tokens.length
+    const generatedTokens = tokenCount
+    const tokensPerSec = generateMs > 0 ? generatedTokens / (generateMs / 1000) : 0
+
+    metrics = { promptTokens, generatedTokens, promptMs: prefillMs, generateMs, tokensPerSec }
+  }
+
+  return { tokenCount, aborted: false, metrics }
 }
 
 /** Free all llama resources (GPU buffers, model, context). */

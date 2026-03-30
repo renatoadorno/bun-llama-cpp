@@ -3,15 +3,14 @@ import { join } from 'node:path'
 
 const MODEL_PATH = join(import.meta.dir, '..', 'models', 'qwen3-8b-q4_k_m.gguf')
 
-// Qwen3 chat template — /no_think disables thinking mode
-const PROMPT = `<|im_start|>user
-Explain Bun FFI in 3 sentences. /no_think<|im_end|>
-<|im_start|>assistant
-`
-
 const llm = await LlamaModel.load(MODEL_PATH, { preset: 'medium' })
 
-const result = await llm.infer(PROMPT, {
+// Use model's built-in chat template instead of hardcoding
+const prompt = await llm.applyTemplate([
+  { role: 'user', content: 'Explain Bun FFI in 3 sentences. /no_think' },
+])
+
+const result = await llm.infer(prompt, {
   onToken: (text) => process.stdout.write(text),
   maxTokens: 200,
 })

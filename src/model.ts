@@ -4,6 +4,9 @@ import type {
   ModelConfig,
   InferOptions,
   InferResult,
+  FimTokens,
+  ModelMetadata,
+  ChatMessage,
   WorkerRequest,
   WorkerResponse,
 } from './types.ts'
@@ -14,6 +17,7 @@ export class LlamaModel {
   private _isReady = false
   private _isBusy = false
   private _disposed = false
+  private _metadata!: ModelMetadata
 
   private constructor(worker: Worker) {
     this.worker = worker
@@ -32,6 +36,7 @@ export class LlamaModel {
         const msg = event.data
         if (msg.type === 'ready') {
           clearTimeout(timer)
+          instance._metadata = msg.metadata
           instance._isReady = true
           resolve()
         } else if (msg.type === 'error') {
@@ -96,6 +101,7 @@ export class LlamaModel {
               text: chunks.join(''),
               tokenCount: msg.tokenCount,
               aborted: false,
+              metrics: msg.metrics,
             })
             break
           }
@@ -126,6 +132,7 @@ export class LlamaModel {
         prompt,
         maxTokens: options.maxTokens ?? 512,
         abortFlag,
+        collectMetrics: options.metrics ?? false,
       }
       this.worker.postMessage(inferMsg)
     })
@@ -133,6 +140,82 @@ export class LlamaModel {
 
   get isReady(): boolean { return this._isReady && !this._disposed }
   get isBusy(): boolean { return this._isBusy }
+
+  /** Model metadata — populated during load(). */
+  get metadata(): ModelMetadata { return this._metadata }
+
+  /** Get Fill-in-Middle token IDs. Returns -1 for unsupported tokens. */
+  async getFimTokens(): Promise<FimTokens> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+
+    return this.queue.enqueue(() => this.doGetFimTokens())
+  }
+
+  private doGetFimTokens(): Promise<FimTokens> {
+    return new Promise<FimTokens>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('getFimTokens timeout (5s)')), 5_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'fimTokens') {
+          clearTimeout(timer)
+          resolve(msg.data)
+        } else if (msg.type === 'error') {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+      const req: WorkerRequest = { type: 'getFimTokens' }
+      this.worker.postMessage(req)
+    })
+  }
+
+  /** Apply the model's chat template to format messages into a prompt string. */
+  async applyTemplate(
+    messages: ChatMessage[],
+    options?: { addAssistant?: boolean },
+  ): Promise<string> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+    if (messages.length === 0) throw new Error('messages must not be empty')
+    if (messages.length > 1024) throw new Error('messages must not exceed 1024 entries')
+    for (const m of messages) {
+      if (m.role.includes('\0') || m.content.includes('\0'))
+        throw new Error('message role and content must not contain NUL characters')
+    }
+
+    return this.queue.enqueue(() => this.doApplyTemplate(messages, options))
+  }
+
+  private doApplyTemplate(
+    messages: ChatMessage[],
+    options?: { addAssistant?: boolean },
+  ): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => reject(new Error('applyTemplate timeout (5s)')), 5_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'templateResult' && msg.id === id) {
+          clearTimeout(timer)
+          resolve(msg.text)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+
+      const req: WorkerRequest = {
+        type: 'applyTemplate',
+        id,
+        messages,
+        addAssistant: options?.addAssistant ?? true,
+      }
+      this.worker.postMessage(req)
+    })
+  }
 
   /** Graceful shutdown — frees GPU/Metal buffers before terminating. */
   async dispose(): Promise<void> {

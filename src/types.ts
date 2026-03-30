@@ -8,6 +8,10 @@ export interface SamplerConfig {
   temp: number
   minP: number
   seed: number
+  repeatPenalty?: number
+  frequencyPenalty?: number
+  presencePenalty?: number
+  penaltyLastN?: number
 }
 
 export interface ModelConfig {
@@ -23,12 +27,45 @@ export interface InferOptions {
   onToken: (text: string) => void
   maxTokens?: number
   signal?: AbortSignal
+  metrics?: boolean
 }
 
 export interface InferResult {
   text: string
   tokenCount: number
   aborted: boolean
+  metrics?: InferMetrics
+}
+
+export interface FimTokens {
+  pre: number
+  suf: number
+  mid: number
+  pad: number
+  rep: number
+  sep: number
+}
+
+export interface ModelMetadata {
+  nParams: number
+  nEmbd: number
+  nCtxTrain: number
+  nLayers: number
+  desc: string
+  sizeBytes: number
+}
+
+export interface InferMetrics {
+  promptTokens: number
+  generatedTokens: number
+  promptMs: number
+  generateMs: number
+  tokensPerSec: number
+}
+
+export interface ChatMessage {
+  role: string
+  content: string
 }
 
 // ── Resolved config (all fields required, used internally) ──────────
@@ -45,12 +82,16 @@ export interface ResolvedConfig {
 
 export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
-  | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array }
+  | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
+  | { type: 'getFimTokens' }
+  | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
-  | { type: 'ready' }
+  | { type: 'ready'; metadata: ModelMetadata }
   | { type: 'token'; id: string; text: string }
-  | { type: 'done'; id: string; tokenCount: number }
+  | { type: 'done'; id: string; tokenCount: number; metrics?: InferMetrics }
   | { type: 'aborted'; id: string }
+  | { type: 'fimTokens'; data: FimTokens }
+  | { type: 'templateResult'; id: string; text: string }
   | { type: 'error'; id?: string; message: string }
