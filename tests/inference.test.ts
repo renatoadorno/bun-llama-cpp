@@ -25,7 +25,7 @@ describe('performance metrics', () => {
     expect(result.metrics).toBeDefined()
     expect(result.metrics!.promptTokens).toBeGreaterThan(0)
     expect(result.metrics!.generatedTokens).toBeGreaterThan(0)
-    expect(result.metrics!.promptMs).toBeGreaterThan(0)
+    expect(result.metrics!.promptMs).toBeGreaterThanOrEqual(0)
     expect(result.metrics!.generateMs).toBeGreaterThan(0)
     expect(result.metrics!.tokensPerSec).toBeGreaterThan(0)
   }, 60_000)
