@@ -117,10 +117,13 @@ export function runInference(
   for (let i = 0; i < tokens.length; i++) {
     S.shim_batch_add(batchBuf, tokens[i]!, i, 0, i === tokens.length - 1)
   }
+  const prefillStart = performance.now()
   const rc = S.shim_decode(ctxPtr, batchBuf)
   if (rc !== 0) throw new Error(`llama_decode (prefill) failed: ${rc}`)
+  const prefillMs = performance.now() - prefillStart
 
   // Generation loop
+  const generateStart = performance.now()
   let pos = tokens.length
   let tokenCount = 0
 
@@ -150,17 +153,12 @@ export function runInference(
 
   let metrics: InferMetrics | undefined
   if (callbacks.collectMetrics) {
-    const perfCtx = new Float64Array(4)
-    S.shim_perf_context_get(ctxPtr, perfCtx)
-
-    const promptMs = perfCtx[0]!
-    const generateMs = perfCtx[1]!
-    const promptTokens = perfCtx[2]!
-    const generatedTokens = perfCtx[3]!
+    const generateMs = performance.now() - generateStart
+    const promptTokens = tokens.length
+    const generatedTokens = tokenCount
     const tokensPerSec = generateMs > 0 ? generatedTokens / (generateMs / 1000) : 0
 
-    metrics = { promptTokens, generatedTokens, promptMs, generateMs, tokensPerSec }
-    L.llama_perf_context_reset(ctxPtr)
+    metrics = { promptTokens, generatedTokens, promptMs: prefillMs, generateMs, tokensPerSec }
   }
 
   return { tokenCount, aborted: false, metrics }
