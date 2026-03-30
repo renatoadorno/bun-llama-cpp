@@ -1,5 +1,5 @@
 {
-  "name": "bun-llama-cpp",
+  "name": "@renatoadorno/bun-llama-cpp",
   "version": "0.1.0",
   "description": "High-performance FFI bindings from Bun to llama.cpp. Direct dlopen to libllama with zero overhead.",
   "module": "src/index.ts",
@@ -44,7 +44,7 @@
     "bun": ">=1.1.0"
   },
   "optionalDependencies": {
-    "bun-llama-cpp-darwin-arm64": "0.1.0"
+    "@renatoadorno/bun-llama-cpp-darwin-arm64": "0.1.0"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -53,6 +53,7 @@
     "typescript": "^5"
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "llama_cpp_version": "98ae0a0d3 (build 8574)"

@@ -1,5 +1,5 @@
 {
-  "name": "bun-llama-cpp-darwin-arm64",
+  "name": "@renatoadorno/bun-llama-cpp-darwin-arm64",
   "version": "0.1.0",
   "description": "macOS Apple Silicon (arm64) prebuilt binaries for bun-llama-cpp",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "README.md"
   ],
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "llama_cpp_version": "98ae0a0d3 (build 8574)"

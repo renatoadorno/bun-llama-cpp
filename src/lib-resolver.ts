@@ -7,10 +7,10 @@ export interface LibPaths {
 }
 
 const PLATFORM_PACKAGES: Record<string, string> = {
-  'darwin-arm64': 'bun-llama-cpp-darwin-arm64',
-  'darwin-x64': 'bun-llama-cpp-darwin-x64',
-  'linux-x64': 'bun-llama-cpp-linux-x64',
-  'linux-arm64': 'bun-llama-cpp-linux-arm64',
+  'darwin-arm64': '@renatoadorno/bun-llama-cpp-darwin-arm64',
+  'darwin-x64': '@renatoadorno/bun-llama-cpp-darwin-x64',
+  'linux-x64': '@renatoadorno/bun-llama-cpp-linux-x64',
+  'linux-arm64': '@renatoadorno/bun-llama-cpp-linux-arm64',
 }
 
 function getExtension(): string {
