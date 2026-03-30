@@ -106,6 +106,11 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
           0,
         )
 
+        if (needed < 0) {
+          post({ type: 'error', id: msg.id, message: 'Chat template not supported by this model' })
+          break
+        }
+
         // Second call: fill buffer
         const buf = Buffer.alloc(needed + 1)
         libs.S.shim_chat_apply_template(

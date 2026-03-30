@@ -89,36 +89,6 @@ struct llama_sampler *shim_sampler_init_min_p(float p, int32_t min_keep) {
     return llama_sampler_init_min_p(p, (size_t)min_keep);
 }
 
-/* ── Performance metrics ──────────────────────────────────────────── */
-
-/*
- * llama_perf_context() returns a struct by value — bun:ffi can't handle that.
- * Extract the fields we need into a flat double array:
- *   [0] = t_p_eval_ms (prompt eval time)
- *   [1] = t_eval_ms   (generation time)
- *   [2] = n_p_eval    (prompt token count, cast to double)
- *   [3] = n_eval      (generated token count, cast to double)
- */
-void shim_perf_context_get(const struct llama_context *ctx, double *out) {
-    struct llama_perf_context_data d = llama_perf_context(ctx);
-    out[0] = d.t_p_eval_ms;
-    out[1] = d.t_eval_ms;
-    out[2] = (double)d.n_p_eval;
-    out[3] = (double)d.n_eval;
-}
-
-/*
- * llama_perf_sampler() also returns struct by value.
- * Extract into flat double array:
- *   [0] = t_sample_ms
- *   [1] = n_sample (cast to double)
- */
-void shim_perf_sampler_get(const struct llama_sampler *chain, double *out) {
-    struct llama_perf_sampler_data d = llama_perf_sampler(chain);
-    out[0] = d.t_sample_ms;
-    out[1] = (double)d.n_sample;
-}
-
 /* ── Chat templates ───────────────────────────────────────────────── */
 
 #include <string.h>
@@ -139,6 +109,7 @@ int32_t shim_chat_apply_template(
     char *buf,
     int32_t length
 ) {
+    if (n_msg <= 0 || n_msg > 1024) return -1;
     struct llama_chat_message *msgs =
         (struct llama_chat_message *)alloca((size_t)n_msg * sizeof(struct llama_chat_message));
     const char *p = messages_packed;
