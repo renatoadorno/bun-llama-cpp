@@ -16,11 +16,26 @@ High-performance FFI bindings from [Bun](https://bun.sh) to [llama.cpp](https://
 
 ## Install
 
-```bash
-bun add bun-llama-cpp
+This package is published on **GitHub Packages** and requires a GitHub PAT with `read:packages` scope.
+
+### 1. Configure authentication
+
+Add to your project's `.npmrc` (never commit this file):
+
+```
+@renatoadorno:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
 ```
 
-The correct native binaries for your platform are installed automatically via `optionalDependencies`.
+### 2. Install
+
+```bash
+bun add @renatoadorno/bun-llama-cpp
+```
+
+The correct platform binary package is installed automatically via `optionalDependencies` — no extra install needed.
+
+For a complete step-by-step setup guide, see **[docs/getting-started.md](docs/getting-started.md)**.
 
 ### Supported Platforms
 
@@ -34,7 +49,7 @@ The correct native binaries for your platform are installed automatically via `o
 ## Quick Start
 
 ```typescript
-import { LlamaModel } from 'bun-llama-cpp'
+import { LlamaModel } from '@renatoadorno/bun-llama-cpp'
 
 const llm = await LlamaModel.load('./model.gguf', { preset: 'medium' })
 
@@ -76,9 +91,25 @@ const result = await llm.infer(prompt, {
   maxTokens: 512,
   onToken: (text) => { /* streaming callback */ },
   signal: AbortSignal.timeout(30_000),
+  metrics: true,   // optional: collect timing data
 })
-// result: { text: string, tokenCount: number, aborted: boolean }
+// result: { text, tokenCount, aborted, metrics? }
 ```
+
+### `llm.applyTemplate(messages, options?)`
+
+Format a conversation using the model's built-in chat template.
+
+```typescript
+const prompt = await llm.applyTemplate([
+  { role: 'system', content: 'You are helpful.' },
+  { role: 'user', content: 'Hello!' },
+])
+```
+
+### `llm.metadata`
+
+Model info populated after `load()` — no extra call needed.
 
 ### `llm.dispose()`
 
