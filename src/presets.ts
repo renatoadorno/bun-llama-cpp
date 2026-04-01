@@ -16,17 +16,17 @@ const PRESETS: Record<Preset, ResolvedConfig> = {
   small: {
     nCtx: 2048, nThreads: 4, nGpuLayers: 99, maxTokens: 256,
     sampler: { ...DEFAULT_SAMPLER },
-    embeddings: false, poolingType: 0, nSeqMax: 64,
+    embeddings: false, poolingType: 0,
   },
   medium: {
     nCtx: 4096, nThreads: 8, nGpuLayers: 99, maxTokens: 512,
     sampler: { ...DEFAULT_SAMPLER },
-    embeddings: false, poolingType: 0, nSeqMax: 64,
+    embeddings: false, poolingType: 0,
   },
   large: {
     nCtx: 8192, nThreads: 8, nGpuLayers: 99, maxTokens: 2048,
     sampler: { ...DEFAULT_SAMPLER },
-    embeddings: false, poolingType: 0, nSeqMax: 64,
+    embeddings: false, poolingType: 0,
   },
 }
 
@@ -42,7 +42,6 @@ export function resolveConfig(config?: ModelConfig): ResolvedConfig {
       ...config?.sampler,
     },
     embeddings:  config?.embeddings  ?? false,
-    poolingType: config?.poolingType ?? 0,   // UNSPECIFIED — callers set explicit type
-    nSeqMax:     config?.nSeqMax     ?? 64,
+    poolingType: config?.poolingType ?? 0,
   }
 }

@@ -2,16 +2,6 @@
 
 export type Preset = 'small' | 'medium' | 'large'
 
-export type PoolingType = 0 | 1 | 2 | 3 | 4
-
-export const PoolingType = {
-  NONE: 0,
-  MEAN: 1,
-  CLS:  2,
-  LAST: 3,
-  RANK: 4,
-} as const
-
 export interface SamplerConfig {
   topK: number
   topP: number
@@ -32,8 +22,7 @@ export interface ModelConfig {
   maxTokens?: number
   sampler?: Partial<SamplerConfig>
   embeddings?: boolean
-  poolingType?: PoolingType
-  nSeqMax?: number
+  poolingType?: 0 | 1 | 2 | 3 | 4  // UNSPECIFIED=0 MEAN=1 CLS=2 LAST=3 RANK=4
 }
 
 export interface InferOptions {
@@ -76,15 +65,6 @@ export interface InferMetrics {
   tokensPerSec: number
 }
 
-export interface EmbedOptions {
-  normalize?: boolean
-}
-
-export interface RankResult {
-  document: string
-  score: number
-}
-
 export interface ChatMessage {
   role: string
   content: string
@@ -100,7 +80,6 @@ export interface ResolvedConfig {
   sampler: SamplerConfig
   embeddings: boolean
   poolingType: number
-  nSeqMax: number
 }
 
 // ── Worker protocol ─────────────────────────────────────────────────
@@ -110,9 +89,8 @@ export type WorkerRequest =
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
-  | { type: 'embed';       id: string; text: string }
-  | { type: 'embedBatch';  id: string; texts: string[] }
-  | { type: 'rank';        id: string; query: string;   documents: string[] }
+  | { type: 'embed';      id: string; text: string }
+  | { type: 'embedBatch'; id: string; texts: string[] }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
@@ -124,5 +102,4 @@ export type WorkerResponse =
   | { type: 'templateResult'; id: string; text: string }
   | { type: 'embedResult';      id: string; vector: Float32Array }
   | { type: 'embedBatchResult'; id: string; vectors: Float32Array[] }
-  | { type: 'rankings';   id: string; results: RankResult[] }
   | { type: 'error'; id?: string; message: string }
