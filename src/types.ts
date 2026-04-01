@@ -2,6 +2,16 @@
 
 export type Preset = 'small' | 'medium' | 'large'
 
+export type PoolingType = 0 | 1 | 2 | 3 | 4
+
+export const PoolingType = {
+  NONE: 0,
+  MEAN: 1,
+  CLS:  2,
+  LAST: 3,
+  RANK: 4,
+} as const
+
 export interface SamplerConfig {
   topK: number
   topP: number
@@ -21,6 +31,9 @@ export interface ModelConfig {
   nGpuLayers?: number
   maxTokens?: number
   sampler?: Partial<SamplerConfig>
+  embeddings?: boolean
+  poolingType?: PoolingType
+  nSeqMax?: number
 }
 
 export interface InferOptions {
@@ -63,6 +76,15 @@ export interface InferMetrics {
   tokensPerSec: number
 }
 
+export interface EmbedOptions {
+  normalize?: boolean
+}
+
+export interface RankResult {
+  document: string
+  score: number
+}
+
 export interface ChatMessage {
   role: string
   content: string
@@ -76,6 +98,9 @@ export interface ResolvedConfig {
   nGpuLayers: number
   maxTokens: number
   sampler: SamplerConfig
+  embeddings: boolean
+  poolingType: number
+  nSeqMax: number
 }
 
 // ── Worker protocol ─────────────────────────────────────────────────
@@ -85,6 +110,9 @@ export type WorkerRequest =
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
+  | { type: 'embed';       id: string; text: string;    normalize: boolean }
+  | { type: 'embedBatch';  id: string; texts: string[]; normalize: boolean }
+  | { type: 'rank';        id: string; query: string;   documents: string[] }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
@@ -94,4 +122,7 @@ export type WorkerResponse =
   | { type: 'aborted'; id: string }
   | { type: 'fimTokens'; data: FimTokens }
   | { type: 'templateResult'; id: string; text: string }
+  | { type: 'embedding';  id: string; vector: Float32Array }
+  | { type: 'embeddings'; id: string; vectors: Float32Array[] }
+  | { type: 'rankings';   id: string; results: RankResult[] }
   | { type: 'error'; id?: string; message: string }
