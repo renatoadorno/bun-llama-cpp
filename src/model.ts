@@ -18,6 +18,7 @@ export class LlamaModel {
   private _isBusy = false
   private _disposed = false
   private _metadata!: ModelMetadata
+  private _embeddingMode = false
 
   private constructor(worker: Worker) {
     this.worker = worker
@@ -38,6 +39,7 @@ export class LlamaModel {
           clearTimeout(timer)
           instance._metadata = msg.metadata
           instance._isReady = true
+          instance._embeddingMode = resolved.embeddings
           resolve()
         } else if (msg.type === 'error') {
           clearTimeout(timer)
@@ -56,6 +58,7 @@ export class LlamaModel {
   async infer(prompt: string, options: InferOptions): Promise<InferResult> {
     if (this._disposed) throw new Error('Model has been disposed')
     if (!this._isReady) throw new Error('Model is not ready')
+    if (this._embeddingMode) throw new Error('Cannot call infer() on an embedding model — use embed() or embedMany()')
 
     return this.queue.enqueue(() => this.doInfer(prompt, options))
   }
@@ -213,6 +216,65 @@ export class LlamaModel {
         messages,
         addAssistant: options?.addAssistant ?? true,
       }
+      this.worker.postMessage(req)
+    })
+  }
+
+  /** Embed a single text. Model must be loaded with embeddings: true. */
+  async embed(text: string): Promise<Float32Array> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+    if (!this._embeddingMode) throw new Error('Load model with embeddings: true to use embed()')
+    return this.queue.enqueue(() => this.doEmbed(text))
+  }
+
+  private doEmbed(text: string): Promise<Float32Array> {
+    return new Promise<Float32Array>((resolve, reject) => {
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => reject(new Error('embed timeout (60s)')), 60_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'embedResult' && msg.id === id) {
+          clearTimeout(timer)
+          resolve(msg.vector)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+
+      const req: WorkerRequest = { type: 'embed', id, text }
+      this.worker.postMessage(req)
+    })
+  }
+
+  /** Embed multiple texts in a single forward pass. Model must be loaded with embeddings: true. */
+  async embedMany(texts: string[]): Promise<Float32Array[]> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+    if (!this._embeddingMode) throw new Error('Load model with embeddings: true to use embedMany()')
+    if (texts.length === 0) return []
+    return this.queue.enqueue(() => this.doEmbedBatch(texts))
+  }
+
+  private doEmbedBatch(texts: string[]): Promise<Float32Array[]> {
+    return new Promise<Float32Array[]>((resolve, reject) => {
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => reject(new Error('embedMany timeout (60s)')), 60_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'embedBatchResult' && msg.id === id) {
+          clearTimeout(timer)
+          resolve(msg.vectors)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+
+      const req: WorkerRequest = { type: 'embedBatch', id, texts }
       this.worker.postMessage(req)
     })
   }

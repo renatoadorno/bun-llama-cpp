@@ -59,13 +59,13 @@ describe('embedMany', () => {
   test('single-text batch matches embed() result', async () => {
     const single = await llm.embed('batch parity check')
     const batch = await llm.embedMany(['batch parity check'])
-    expect(batch[0].every((x, i) => x === single[i])).toBe(true)
+    expect(batch[0]!.every((x, i) => x === single[i])).toBe(true)
   }, 120_000)
 
   test('all vectors in a batch have the same length', async () => {
     const texts = ['short', 'a slightly longer sentence for testing', 'x']
     const vectors = await llm.embedMany(texts)
-    const dim = vectors[0].length
+    const dim = vectors[0]!.length
     expect(vectors.every(v => v.length === dim)).toBe(true)
   }, 120_000)
 })
