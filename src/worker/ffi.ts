@@ -28,6 +28,9 @@ export interface LibLlama {
   llama_model_desc: (model: number, buf: Buffer, bufSize: number) => number
   llama_model_chat_template: (model: number, name: number | null) => number
 
+  llama_get_embeddings_seq: (ctx: number, seqId: number) => number
+  llama_model_has_encoder: (model: number) => boolean
+
   llama_tokenize: (
     vocab: number, text: Buffer, textLen: number,
     tokens: Int32Array, nTokensMax: number,
@@ -68,6 +71,9 @@ export interface LibShims {
   shim_model_params_set_n_gpu_layers: (buf: Buffer, n: number) => void
   shim_ctx_params_set_n_ctx: (buf: Buffer, n: number) => void
   shim_ctx_params_set_n_threads: (buf: Buffer, n: number) => void
+  shim_ctx_params_set_embeddings: (buf: Buffer, v: boolean) => void
+  shim_ctx_params_set_pooling_type: (buf: Buffer, type: number) => void
+  shim_encode: (ctx: number, buf: Buffer) => number
 
   shim_model_load_from_file: (path: Buffer, params: Buffer) => number
   shim_init_from_model: (model: number, params: Buffer) => number
@@ -118,6 +124,9 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_model_desc:        { args: [FFIType.ptr, FFIType.ptr, FFIType.u64],    returns: FFIType.i32 },
     llama_model_chat_template: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
 
+    llama_get_embeddings_seq: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr  },
+    llama_model_has_encoder:  { args: [FFIType.ptr],              returns: FFIType.bool },
+
     llama_tokenize: {
       args: [
         FFIType.ptr, FFIType.cstring, FFIType.i32,
@@ -164,6 +173,9 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_model_params_set_n_gpu_layers: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
     shim_ctx_params_set_n_ctx:          { args: [FFIType.ptr, FFIType.u32], returns: FFIType.void },
     shim_ctx_params_set_n_threads:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
+    shim_ctx_params_set_embeddings:     { args: [FFIType.ptr, FFIType.bool], returns: FFIType.void },
+    shim_ctx_params_set_pooling_type:   { args: [FFIType.ptr, FFIType.i32],  returns: FFIType.void },
+    shim_encode:                        { args: [FFIType.ptr, FFIType.ptr],  returns: FFIType.i32  },
 
     shim_model_load_from_file: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.ptr },
     shim_init_from_model:      { args: [FFIType.ptr,     FFIType.ptr], returns: FFIType.ptr },
