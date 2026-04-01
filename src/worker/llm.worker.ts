@@ -167,9 +167,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
+        muteStderr()
         const vector = runEmbed(libs.L, libs.S, state, msg.text)
+        restoreStderr()
         post({ type: 'embedResult', id: msg.id, vector })
       } catch (e) {
+        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break
@@ -181,9 +184,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
+        muteStderr()
         const vectors = runEmbedBatch(libs.L, libs.S, state, msg.texts)
+        restoreStderr()
         post({ type: 'embedBatchResult', id: msg.id, vectors })
       } catch (e) {
+        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break

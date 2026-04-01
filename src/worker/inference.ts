@@ -184,27 +184,35 @@ export function runEmbed(
   const tokens = tokenize(L, state.vocabPtr, text)
   const n_embd = L.llama_model_n_embd(state.modelPtr) as number
 
+  const nCtx = L.llama_n_ctx(state.ctxPtr) as number
+  if (tokens.length > nCtx) throw new Error(`Input too long: ${tokens.length} tokens exceeds context length ${nCtx}`)
+
   const tempBatch = Buffer.alloc(Number(S.shim_sizeof_batch()))
   S.shim_batch_init(tempBatch, tokens.length, 0, 1)
-  for (let j = 0; j < tokens.length; j++) {
-    S.shim_batch_add(tempBatch, tokens[j]!, j, 0, true)
+  let ptr: Pointer
+  try {
+    for (let j = 0; j < tokens.length; j++) {
+      S.shim_batch_add(tempBatch, tokens[j]!, j, 0, true)
+    }
+
+    const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
+    // For encoder models, llama_encode manages its own state;
+    // KV-cache clear is only needed for decoder-only models used as embedders.
+    if (!hasEncoder) {
+      const mem = L.llama_get_memory(state.ctxPtr)
+      L.llama_memory_clear(mem, false)
+    }
+
+    const ret = hasEncoder
+      ? S.shim_encode(state.ctxPtr, tempBatch) as number
+      : S.shim_decode(state.ctxPtr, tempBatch) as number
+    if (ret !== 0) throw new Error(`embedding forward pass failed: ${ret}`)
+
+    ptr = L.llama_get_embeddings_seq(state.ctxPtr, 0) as unknown as Pointer
+    if (!ptr) throw new Error('null embedding pointer for sequence 0')
+  } finally {
+    S.shim_batch_free(tempBatch)
   }
-
-  const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
-  if (!hasEncoder) {
-    const mem = L.llama_get_memory(state.ctxPtr)
-    L.llama_memory_clear(mem, false)
-  }
-
-  const ret = hasEncoder
-    ? S.shim_encode(state.ctxPtr, tempBatch) as number
-    : S.shim_decode(state.ctxPtr, tempBatch) as number
-
-  S.shim_batch_free(tempBatch)
-  if (ret !== 0) throw new Error(`embedding forward pass failed: ${ret}`)
-
-  const ptr = L.llama_get_embeddings_seq(state.ctxPtr, 0) as unknown as Pointer
-  if (!ptr) throw new Error('null embedding pointer for sequence 0')
 
   const raw = new Float32Array(toArrayBuffer(ptr, 0, n_embd * 4))
   return raw.slice()  // copy from C-owned memory before next FFI call

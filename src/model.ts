@@ -249,7 +249,7 @@ export class LlamaModel {
     })
   }
 
-  /** Embed multiple texts in a single forward pass. Model must be loaded with embeddings: true. */
+  /** Embed multiple texts sequentially. Model must be loaded with embeddings: true. */
   async embedMany(texts: string[]): Promise<Float32Array[]> {
     if (this._disposed) throw new Error('Model has been disposed')
     if (!this._isReady) throw new Error('Model is not ready')
