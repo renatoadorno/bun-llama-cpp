@@ -110,8 +110,8 @@ export type WorkerRequest =
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
-  | { type: 'embed';       id: string; text: string;    normalize: boolean }
-  | { type: 'embedBatch';  id: string; texts: string[]; normalize: boolean }
+  | { type: 'embed';       id: string; text: string }
+  | { type: 'embedBatch';  id: string; texts: string[] }
   | { type: 'rank';        id: string; query: string;   documents: string[] }
   | { type: 'shutdown' }
 
@@ -122,7 +122,7 @@ export type WorkerResponse =
   | { type: 'aborted'; id: string }
   | { type: 'fimTokens'; data: FimTokens }
   | { type: 'templateResult'; id: string; text: string }
-  | { type: 'embedding';  id: string; vector: Float32Array }
-  | { type: 'embeddings'; id: string; vectors: Float32Array[] }
+  | { type: 'embedResult';      id: string; vector: Float32Array }
+  | { type: 'embedBatchResult'; id: string; vectors: Float32Array[] }
   | { type: 'rankings';   id: string; results: RankResult[] }
   | { type: 'error'; id?: string; message: string }
