@@ -210,48 +210,14 @@ export function runEmbed(
   return raw.slice()  // copy from C-owned memory before next FFI call
 }
 
-/** Run multiple texts through the embedding forward pass in a single call. Returns copied Float32Arrays. */
+/** Embed multiple texts sequentially, returning one Float32Array per text. */
 export function runEmbedBatch(
   L: LibLlama,
   S: LibShims,
   state: LlamaState,
   texts: string[],
 ): Float32Array[] {
-  const n_embd = L.llama_model_n_embd(state.modelPtr) as number
-  const tokenArrays = texts.map(t => tokenize(L, state.vocabPtr, t))
-  const totalTokens = tokenArrays.reduce((sum, t) => sum + t.length, 0)
-
-  const tempBatch = Buffer.alloc(Number(S.shim_sizeof_batch()))
-  S.shim_batch_init(tempBatch, totalTokens, 0, 1)
-  for (let i = 0; i < texts.length; i++) {
-    const toks = tokenArrays[i]!
-    for (let j = 0; j < toks.length; j++) {
-      // seq_id=i gives each text its own sequence; pos=j is position within that text
-      S.shim_batch_add(tempBatch, toks[j]!, j, i, true)
-    }
-  }
-
-  const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
-  if (!hasEncoder) {
-    const mem = L.llama_get_memory(state.ctxPtr)
-    L.llama_memory_clear(mem, false)
-  }
-
-  const ret = hasEncoder
-    ? S.shim_encode(state.ctxPtr, tempBatch) as number
-    : S.shim_decode(state.ctxPtr, tempBatch) as number
-
-  S.shim_batch_free(tempBatch)
-  if (ret !== 0) throw new Error(`batch embedding forward pass failed: ${ret}`)
-
-  const results: Float32Array[] = []
-  for (let i = 0; i < texts.length; i++) {
-    const ptr = L.llama_get_embeddings_seq(state.ctxPtr, i) as unknown as Pointer
-    if (!ptr) throw new Error(`null embedding pointer for sequence ${i}`)
-    const raw = new Float32Array(toArrayBuffer(ptr, 0, n_embd * 4))
-    results.push(raw.slice())  // copy immediately before next loop iteration
-  }
-  return results
+  return texts.map(t => runEmbed(L, S, state, t))
 }
 
 /** Free all llama resources (GPU buffers, model, context). */
