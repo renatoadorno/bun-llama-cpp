@@ -189,10 +189,9 @@ export function runEmbed(
 
   const tempBatch = Buffer.alloc(Number(S.shim_sizeof_batch()))
   S.shim_batch_init(tempBatch, tokens.length, 0, 1)
-  let ptr: Pointer
   try {
     for (let j = 0; j < tokens.length; j++) {
-      S.shim_batch_add(tempBatch, tokens[j]!, j, 0, true)
+      S.shim_batch_add(tempBatch, tokens[j]!, j, 0, false)
     }
 
     const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
@@ -208,14 +207,14 @@ export function runEmbed(
       : S.shim_decode(state.ctxPtr, tempBatch) as number
     if (ret !== 0) throw new Error(`embedding forward pass failed: ${ret}`)
 
-    ptr = L.llama_get_embeddings_seq(state.ctxPtr, 0) as unknown as Pointer
+    const ptr = L.llama_get_embeddings_seq(state.ctxPtr, 0) as unknown as Pointer
     if (!ptr) throw new Error('null embedding pointer for sequence 0')
+
+    const raw = new Float32Array(toArrayBuffer(ptr, 0, n_embd * 4))
+    return raw.slice()  // copy from C-owned memory before next FFI call
   } finally {
     S.shim_batch_free(tempBatch)
   }
-
-  const raw = new Float32Array(toArrayBuffer(ptr, 0, n_embd * 4))
-  return raw.slice()  // copy from C-owned memory before next FFI call
 }
 
 /** Embed multiple texts sequentially, returning one Float32Array per text. */
