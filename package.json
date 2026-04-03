@@ -1,6 +1,6 @@
 {
   "name": "@renatoadorno/bun-llama-cpp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "High-performance FFI bindings from Bun to llama.cpp. Direct dlopen to libllama with zero overhead.",
   "module": "src/index.ts",
   "type": "module",
