@@ -40,7 +40,7 @@ function tryLocalDev(): LibPaths | null {
   const ext = getExtension()
 
   const libllama = join(root, `llama.cpp/build/bin/libllama.${ext}`)
-  const libshims = join(root, `src/libllama_shims.${ext}`)
+  const libshims = join(root, `native/libllama_shims.${ext}`)
 
   const llamaExists = Bun.file(libllama).size > 0
   const shimsExists = Bun.file(libshims).size > 0

@@ -14,38 +14,34 @@ const DEFAULT_SAMPLER: SamplerConfig = {
 
 const PRESETS: Record<Preset, ResolvedConfig> = {
   small: {
-    nCtx: 2048,
-    nThreads: 4,
-    nGpuLayers: 99,
-    maxTokens: 256,
+    nCtx: 2048, nThreads: 4, nGpuLayers: 99, maxTokens: 256,
     sampler: { ...DEFAULT_SAMPLER },
+    embeddings: false, poolingType: 0,
   },
   medium: {
-    nCtx: 4096,
-    nThreads: 8,
-    nGpuLayers: 99,
-    maxTokens: 512,
+    nCtx: 4096, nThreads: 8, nGpuLayers: 99, maxTokens: 512,
     sampler: { ...DEFAULT_SAMPLER },
+    embeddings: false, poolingType: 0,
   },
   large: {
-    nCtx: 8192,
-    nThreads: 8,
-    nGpuLayers: 99,
-    maxTokens: 2048,
+    nCtx: 8192, nThreads: 8, nGpuLayers: 99, maxTokens: 2048,
     sampler: { ...DEFAULT_SAMPLER },
+    embeddings: false, poolingType: 0,
   },
 }
 
 export function resolveConfig(config?: ModelConfig): ResolvedConfig {
   const base = PRESETS[config?.preset ?? 'medium']
   return {
-    nCtx: config?.nCtx ?? base.nCtx,
-    nThreads: config?.nThreads ?? base.nThreads,
+    nCtx:       config?.nCtx       ?? base.nCtx,
+    nThreads:   config?.nThreads   ?? base.nThreads,
     nGpuLayers: config?.nGpuLayers ?? base.nGpuLayers,
-    maxTokens: config?.maxTokens ?? base.maxTokens,
+    maxTokens:  config?.maxTokens  ?? base.maxTokens,
     sampler: {
       ...base.sampler,
       ...config?.sampler,
     },
+    embeddings:  config?.embeddings  ?? false,
+    poolingType: config?.poolingType ?? 0,
   }
 }

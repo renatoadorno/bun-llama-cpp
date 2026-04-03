@@ -38,12 +38,12 @@ cd "$ROOT_DIR"
 
 if [[ "$OS" == "Darwin" ]]; then
   EXT="dylib"
-  cc -shared -fPIC -o src/libllama_shims.$EXT src/llama_shims.c \
+  cc -shared -fPIC -o native/libllama_shims.$EXT native/llama_shims.c \
     -I llama.cpp/include -I llama.cpp/ggml/include \
     -undefined dynamic_lookup
 else
   EXT="so"
-  cc -shared -fPIC -o src/libllama_shims.$EXT src/llama_shims.c \
+  cc -shared -fPIC -o native/libllama_shims.$EXT native/llama_shims.c \
     -I llama.cpp/include -I llama.cpp/ggml/include
 fi
 
@@ -54,7 +54,7 @@ mkdir -p "$OUTPUT_DIR"
 
 cp "$LLAMA_DIR/build/bin/libllama.$EXT" "$OUTPUT_DIR/"
 cp "$LLAMA_DIR/build/bin/libggml"*".$EXT" "$OUTPUT_DIR/" 2>/dev/null || true
-cp "$ROOT_DIR/src/libllama_shims.$EXT" "$OUTPUT_DIR/"
+cp "$ROOT_DIR/native/libllama_shims.$EXT" "$OUTPUT_DIR/"
 
 # Copy Metal shaders if on macOS
 if [[ "$OS" == "Darwin" ]]; then

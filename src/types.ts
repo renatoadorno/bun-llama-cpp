@@ -21,6 +21,8 @@ export interface ModelConfig {
   nGpuLayers?: number
   maxTokens?: number
   sampler?: Partial<SamplerConfig>
+  embeddings?: boolean
+  poolingType?: 0 | 1 | 2 | 3 | 4  // UNSPECIFIED=0 MEAN=1 CLS=2 LAST=3 RANK=4
 }
 
 export interface InferOptions {
@@ -76,6 +78,8 @@ export interface ResolvedConfig {
   nGpuLayers: number
   maxTokens: number
   sampler: SamplerConfig
+  embeddings: boolean
+  poolingType: number
 }
 
 // ── Worker protocol ─────────────────────────────────────────────────
@@ -85,6 +89,8 @@ export type WorkerRequest =
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
+  | { type: 'embed';      id: string; text: string }
+  | { type: 'embedBatch'; id: string; texts: string[] }
   | { type: 'shutdown' }
 
 export type WorkerResponse =
@@ -94,4 +100,6 @@ export type WorkerResponse =
   | { type: 'aborted'; id: string }
   | { type: 'fimTokens'; data: FimTokens }
   | { type: 'templateResult'; id: string; text: string }
+  | { type: 'embedResult';      id: string; vector: Float32Array }
+  | { type: 'embedBatchResult'; id: string; vectors: Float32Array[] }
   | { type: 'error'; id?: string; message: string }

@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from 'bun:ffi'
 import type { WorkerRequest, WorkerResponse } from '../types.ts'
 import { openLibraries } from './ffi.ts'
-import { initModel, runInference, cleanup, collectMetadata, type LlamaState } from './inference.ts'
+import { initModel, runInference, runEmbed, runEmbedBatch, cleanup, collectMetadata, type LlamaState } from './inference.ts'
 import { resolveLibPaths } from '../lib-resolver.ts'
 
 declare var self: Worker
@@ -154,6 +154,40 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         } else {
           post({ type: 'done', id: msg.id, tokenCount: result.tokenCount, metrics: result.metrics })
         }
+      } catch (e) {
+        restoreStderr()
+        post({ type: 'error', id: msg.id, message: String(e) })
+      }
+      break
+    }
+
+    case 'embed': {
+      if (!libs || !state) {
+        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      try {
+        muteStderr()
+        const vector = runEmbed(libs.L, libs.S, state, msg.text)
+        restoreStderr()
+        post({ type: 'embedResult', id: msg.id, vector })
+      } catch (e) {
+        restoreStderr()
+        post({ type: 'error', id: msg.id, message: String(e) })
+      }
+      break
+    }
+
+    case 'embedBatch': {
+      if (!libs || !state) {
+        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      try {
+        muteStderr()
+        const vectors = runEmbedBatch(libs.L, libs.S, state, msg.texts)
+        restoreStderr()
+        post({ type: 'embedBatchResult', id: msg.id, vectors })
       } catch (e) {
         restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })

@@ -94,6 +94,20 @@ struct llama_sampler *shim_sampler_init_min_p(float p, int32_t min_keep) {
 #include <string.h>
 #include <alloca.h>
 
+/* ── Embedding context params ──────────────────────────────────────── */
+void shim_ctx_params_set_embeddings(struct llama_context_params *p, bool v) {
+    p->embeddings = v;
+}
+
+void shim_ctx_params_set_pooling_type(struct llama_context_params *p, int32_t type) {
+    p->pooling_type = (enum llama_pooling_type)type;
+}
+
+/* shim_encode: wraps llama_encode (takes llama_batch by value) */
+int32_t shim_encode(struct llama_context *ctx, struct llama_batch *batch) {
+    return llama_encode(ctx, *batch);
+}
+
 /*
  * Wraps llama_chat_apply_template — accepts packed null-separated message pairs
  * instead of llama_chat_message array (easier for bun:ffi).

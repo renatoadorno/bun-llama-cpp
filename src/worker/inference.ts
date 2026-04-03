@@ -1,3 +1,4 @@
+import { toArrayBuffer, type Pointer } from 'bun:ffi'
 import type { LibLlama, LibShims } from './ffi.ts'
 import type { ResolvedConfig, ModelMetadata, InferMetrics } from '../types.ts'
 import { tokenize, tokenPiece, isEndOfGeneration, isSpecialToken } from './tokenizer.ts'
@@ -6,7 +7,7 @@ export interface LlamaState {
   modelPtr: number
   ctxPtr: number
   vocabPtr: number
-  samplerPtr: number
+  samplerPtr: number | null  // null in embedding mode
   batchBuf: Buffer
   chatTemplatePtr: number
 }
@@ -40,6 +41,11 @@ export function initModel(
   S.shim_ctx_params_set_n_ctx(cpBuf, config.nCtx)
   S.shim_ctx_params_set_n_threads(cpBuf, config.nThreads)
 
+  if (config.embeddings) {
+    S.shim_ctx_params_set_embeddings(cpBuf, true)
+    S.shim_ctx_params_set_pooling_type(cpBuf, config.poolingType)
+  }
+
   const ctxPtr = S.shim_init_from_model(modelPtr, cpBuf)
   if (!ctxPtr) throw new Error('Failed to create context')
 
@@ -47,27 +53,30 @@ export function initModel(
   const batchBuf = Buffer.alloc(Number(S.shim_sizeof_batch()))
   S.shim_batch_init(batchBuf, config.nCtx, 0, 1)
 
-  // Sampler chain: top-p → min-p → top-k → temp → dist
-  const scpBuf = Buffer.alloc(Number(S.shim_sizeof_sampler_chain_params()))
-  S.shim_sampler_chain_default_params(scpBuf)
-  const samplerPtr = S.shim_sampler_chain_init(scpBuf)
+  // Sampler chain: only for generation mode
+  let samplerPtr: number | null = null
+  if (!config.embeddings) {
+    const scpBuf = Buffer.alloc(Number(S.shim_sizeof_sampler_chain_params()))
+    S.shim_sampler_chain_default_params(scpBuf)
+    samplerPtr = S.shim_sampler_chain_init(scpBuf) as unknown as number
 
-  const { sampler: sc } = config
-  L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_top_p(sc.topP, 1))
-  L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_min_p(sc.minP, 1))
-  L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_top_k(sc.topK))
+    const { sampler: sc } = config
+    L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_top_p(sc.topP, 1))
+    L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_min_p(sc.minP, 1))
+    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_top_k(sc.topK))
 
-  // Penalties after top-k/top-p (llama.h: "apply top-k or top-p sampling first")
-  const rp = sc.repeatPenalty ?? 1.1
-  const fp = sc.frequencyPenalty ?? 0.0
-  const pp = sc.presencePenalty ?? 0.0
-  const pn = sc.penaltyLastN ?? 64
-  if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
-    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+    // Penalties after top-k/top-p (llama.h: "apply top-k or top-p sampling first")
+    const rp = sc.repeatPenalty ?? 1.1
+    const fp = sc.frequencyPenalty ?? 0.0
+    const pp = sc.presencePenalty ?? 0.0
+    const pn = sc.penaltyLastN ?? 64
+    if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
+      L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+    }
+
+    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
+    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
   }
-
-  L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
-  L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
 
   return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf, chatTemplatePtr }
 }
@@ -104,6 +113,7 @@ export function runInference(
   maxTokens: number,
   callbacks: InferCallbacks,
 ): { tokenCount: number; aborted: boolean; metrics?: InferMetrics } {
+  if (state.samplerPtr === null) throw new Error('Cannot infer on an embedding model — use embed() or embedMany()')
   const { ctxPtr, vocabPtr, samplerPtr, batchBuf } = state
   const tokens = tokenize(L, vocabPtr, prompt)
 
@@ -162,6 +172,59 @@ export function runInference(
   }
 
   return { tokenCount, aborted: false, metrics }
+}
+
+/** Run a single text through the embedding forward pass. Returns a copied Float32Array. */
+export function runEmbed(
+  L: LibLlama,
+  S: LibShims,
+  state: LlamaState,
+  text: string,
+): Float32Array {
+  const tokens = tokenize(L, state.vocabPtr, text)
+  const n_embd = L.llama_model_n_embd(state.modelPtr) as number
+
+  const nCtx = L.llama_n_ctx(state.ctxPtr) as number
+  if (tokens.length > nCtx) throw new Error(`Input too long: ${tokens.length} tokens exceeds context length ${nCtx}`)
+
+  const tempBatch = Buffer.alloc(Number(S.shim_sizeof_batch()))
+  S.shim_batch_init(tempBatch, tokens.length, 0, 1)
+  try {
+    for (let j = 0; j < tokens.length; j++) {
+      S.shim_batch_add(tempBatch, tokens[j]!, j, 0, false)
+    }
+
+    const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
+    // For encoder models, llama_encode manages its own state;
+    // KV-cache clear is only needed for decoder-only models used as embedders.
+    if (!hasEncoder) {
+      const mem = L.llama_get_memory(state.ctxPtr)
+      L.llama_memory_clear(mem, false)
+    }
+
+    const ret = hasEncoder
+      ? S.shim_encode(state.ctxPtr, tempBatch) as number
+      : S.shim_decode(state.ctxPtr, tempBatch) as number
+    if (ret !== 0) throw new Error(`embedding forward pass failed: ${ret}`)
+
+    const ptr = L.llama_get_embeddings_seq(state.ctxPtr, 0) as unknown as Pointer
+    if (!ptr) throw new Error('null embedding pointer for sequence 0')
+
+    const raw = new Float32Array(toArrayBuffer(ptr, 0, n_embd * 4))
+    return raw.slice()  // copy from C-owned memory before next FFI call
+  } finally {
+    S.shim_batch_free(tempBatch)
+  }
+}
+
+/** Embed multiple texts sequentially, returning one Float32Array per text. */
+export function runEmbedBatch(
+  L: LibLlama,
+  S: LibShims,
+  state: LlamaState,
+  texts: string[],
+): Float32Array[] {
+  return texts.map(t => runEmbed(L, S, state, t))
 }
 
 /** Free all llama resources (GPU buffers, model, context). */

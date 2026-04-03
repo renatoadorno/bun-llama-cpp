@@ -1,6 +1,6 @@
 {
   "name": "@renatoadorno/bun-llama-cpp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "High-performance FFI bindings from Bun to llama.cpp. Direct dlopen to libllama with zero overhead.",
   "module": "src/index.ts",
   "type": "module",
@@ -9,13 +9,14 @@
   },
   "files": [
     "src/**/*.ts",
-    "src/**/*.c",
+    "native/llama_shims.c",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build:shims": "cc -shared -fPIC -o src/libllama_shims.dylib src/llama_shims.c -I llama.cpp/include -I llama.cpp/ggml/include -undefined dynamic_lookup",
+    "build:shims": "cc -shared -fPIC -o native/libllama_shims.dylib native/llama_shims.c -I llama.cpp/include -I llama.cpp/ggml/include -undefined dynamic_lookup",
     "start": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/demo.ts",
+    "start:embed": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/embed.ts",
     "dev": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun --hot example/demo.ts",
     "test": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun test tests/ src/llm.worker.test.ts"
   },
