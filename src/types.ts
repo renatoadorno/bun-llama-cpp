@@ -94,17 +94,8 @@ export type WorkerRequest =
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
   | { type: 'embed';      id: string; text: string }
   | { type: 'embedBatch'; id: string; texts: string[] }
-  | { type: 'inferParallel'; id: string; requests: ParallelInferRequest[]; warmupTokens: number }
   | { type: 'warmup'; id: string; systemPrompt: string }
   | { type: 'shutdown' }
-
-export interface ParallelInferRequest {
-  prompt: string
-  maxTokens: number
-  priority?: number
-  abortFlag: Int32Array
-  collectMetrics?: boolean
-}
 
 export interface ParallelInferResult {
   text: string
@@ -122,9 +113,7 @@ export type WorkerResponse =
   | { type: 'templateResult'; id: string; text: string }
   | { type: 'embedResult';      id: string; vector: Float32Array }
   | { type: 'embedBatchResult'; id: string; vectors: Float32Array[] }
-  | { type: 'inferParallelResult'; id: string; results: ParallelInferResult[] }
   | { type: 'warmupDone'; id: string; tokenCount: number }
-  | { type: 'parallelToken'; id: string; seqIndex: number; text: string }
   | { type: 'seqToken'; id: string; text: string }
   | { type: 'seqDone'; id: string; text: string; tokenCount: number; aborted: boolean; metrics?: InferMetrics }
   | { type: 'error'; id?: string; message: string }

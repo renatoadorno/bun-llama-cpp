@@ -58,6 +58,7 @@ export class BatchEngine {
   private pending: BatchRequest[] = []
   private active: ActiveSeq[] = []
   private loopRunning = false
+  private fatalError = false
 
   constructor(L: LibLlama, S: LibShims, state: LlamaState, callbacks: BatchCallbacks) {
     this.L = L
@@ -71,7 +72,25 @@ export class BatchEngine {
     return this.active.length > 0 || this.pending.length > 0
   }
 
+  /** Stop the engine and notify all active/pending sequences with an error. */
+  shutdown(): void {
+    this.fatalError = true
+    this.loopRunning = false
+    for (const seq of this.active) {
+      this.callbacks.onError(seq.id, 'Batch engine shutting down')
+    }
+    for (const req of this.pending) {
+      this.callbacks.onError(req.id, 'Batch engine shutting down')
+    }
+    this.active = []
+    this.pending = []
+  }
+
   enqueue(request: BatchRequest): void {
+    if (this.fatalError) {
+      this.callbacks.onError(request.id, 'Batch engine is in fatal error state')
+      return
+    }
     this.pending.push(request)
     if (!this.loopRunning) this.startLoop()
   }
@@ -95,30 +114,26 @@ export class BatchEngine {
         return
       }
 
-      // 4. Prefill any sequences that need it
-      const needsPrefill = this.active.filter(s => s.state === 'pending_prefill')
-      if (needsPrefill.length > 0) {
-        this.prefillBatch(needsPrefill)
-      }
+      // 4. Build unified batch: sample generating seqs + prefill new seqs in ONE decode
+      this.unifiedStep()
 
-      // 5. Generate one token for each active generating sequence
-      const generating = this.active.filter(s => s.state === 'generating')
-      if (generating.length > 0) {
-        this.generateStep(generating)
-      }
-
-      // 6. Yield to event loop, then continue
+      // 5. Yield to event loop, then continue
       if (this.active.length > 0 || this.pending.length > 0) {
         setTimeout(() => this.step(), 0)
       } else {
         this.loopRunning = false
       }
     } catch (e) {
-      // Fatal error — notify all active sequences and stop
+      // Fatal error — notify all active and pending sequences, then stop
       for (const seq of this.active) {
         this.callbacks.onError(seq.id, String(e))
       }
+      for (const req of this.pending) {
+        this.callbacks.onError(req.id, String(e))
+      }
       this.active = []
+      this.pending = []
+      this.fatalError = true
       this.loopRunning = false
     }
   }
@@ -186,47 +201,23 @@ export class BatchEngine {
     }
   }
 
-  private prefillBatch(seqs: ActiveSeq[]): void {
-    const { ctxPtr, batchBuf } = this.state
-
-    this.S.shim_batch_clear(batchBuf)
-    for (const seq of seqs) {
-      seq.prefillStart = seq.collectMetrics ? performance.now() : 0
-      for (let i = 0; i < seq.tokens.length; i++) {
-        const isLast = (i === seq.tokens.length - 1)
-        this.S.shim_batch_add(batchBuf, seq.tokens[i]!, seq.position + i, seq.seqId, isLast)
-      }
-    }
-
-    const rc = this.S.shim_decode(ctxPtr, batchBuf)
-    if (rc !== 0) throw new Error(`continuous prefill decode failed: ${rc}`)
-
-    // Transition to generating
-    for (let i = 0; i < seqs.length; i++) {
-      const seq = seqs[i]!
-      seq.position += seq.tokens.length
-      seq.prefillMs = seq.collectMetrics ? performance.now() - seq.prefillStart : 0
-      seq.generateStart = seq.collectMetrics ? performance.now() : 0
-      seq.state = 'generating'
-      seq.batchIndex = i  // logits output index from prefill
-    }
-  }
-
-  private generateStep(seqs: ActiveSeq[]): void {
+  /**
+   * Unified step: build ONE batch with both prefill tokens and generation tokens,
+   * then ONE shim_decode() call. This ensures logit indices are always valid.
+   */
+  private unifiedStep(): void {
     const { ctxPtr, vocabPtr, samplers, batchBuf } = this.state
-    const mem = this.L.llama_get_memory(ctxPtr)
+    const generating = this.active.filter(s => s.state === 'generating')
+    const needsPrefill = this.active.filter(s => s.state === 'pending_prefill')
 
-    // Sample from previous decode, build next batch
     this.S.shim_batch_clear(batchBuf)
-    let batchIdx = 0
-    const toRemove: number[] = []
+    let logitIdx = 0
+    const finished: ActiveSeq[] = []
 
-    for (let i = 0; i < seqs.length; i++) {
-      const seq = seqs[i]!
-
+    // ── Part A: Sample from generating sequences (using previous decode's logits) ──
+    for (const seq of generating) {
       if (seq.tokenCount >= seq.maxTokens) {
-        this.finishSeq(seq, false)
-        toRemove.push(i)
+        finished.push(seq)
         continue
       }
 
@@ -235,8 +226,7 @@ export class BatchEngine {
       const piece = tokenPiece(this.L, vocabPtr, token)
 
       if (isEndOfGeneration(this.L, vocabPtr, token, piece)) {
-        this.finishSeq(seq, false)
-        toRemove.push(i)
+        finished.push(seq)
         continue
       }
 
@@ -248,21 +238,41 @@ export class BatchEngine {
         this.callbacks.onToken(seq.id, piece)
       }
 
+      // Add sampled token to the unified batch (logits=true)
       this.S.shim_batch_add(batchBuf, token, seq.position, seq.seqId, true)
       seq.position++
-      seq.batchIndex = batchIdx++
+      seq.batchIndex = logitIdx++
     }
 
-    // Remove finished sequences (reverse order to keep indices valid)
-    for (let i = toRemove.length - 1; i >= 0; i--) {
-      const idx = this.active.indexOf(seqs[toRemove[i]!]!)
+    // ── Part B: Add prefill tokens for new sequences ──
+    for (const seq of needsPrefill) {
+      seq.prefillStart = seq.collectMetrics ? performance.now() : 0
+      for (let i = 0; i < seq.tokens.length; i++) {
+        const isLast = (i === seq.tokens.length - 1)
+        this.S.shim_batch_add(batchBuf, seq.tokens[i]!, seq.position + i, seq.seqId, isLast)
+        if (isLast) seq.batchIndex = logitIdx++
+      }
+    }
+
+    // ── Remove finished sequences ──
+    for (const seq of finished) {
+      this.finishSeq(seq, false)
+      const idx = this.active.indexOf(seq)
       if (idx !== -1) this.active.splice(idx, 1)
     }
 
-    // Decode remaining active sequences
-    if (batchIdx > 0) {
+    // ── Single decode for all active sequences ──
+    if (logitIdx > 0) {
       const rc = this.S.shim_decode(ctxPtr, batchBuf)
-      if (rc !== 0) throw new Error(`continuous generation decode failed: ${rc}`)
+      if (rc !== 0) throw new Error(`continuous batch decode failed: ${rc}`)
+    }
+
+    // ── Transition prefilled sequences to generating ──
+    for (const seq of needsPrefill) {
+      seq.position += seq.tokens.length
+      seq.prefillMs = seq.collectMetrics ? performance.now() - seq.prefillStart : 0
+      seq.generateStart = seq.collectMetrics ? performance.now() : 0
+      seq.state = 'generating'
     }
   }
 

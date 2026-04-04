@@ -1,6 +1,6 @@
 import { toArrayBuffer, type Pointer } from 'bun:ffi'
 import type { LibLlama, LibShims } from './ffi.ts'
-import type { ResolvedConfig, ModelMetadata, InferMetrics, ParallelInferRequest, ParallelInferResult } from '../types.ts'
+import type { ResolvedConfig, ModelMetadata, InferMetrics, ParallelInferResult } from '../types.ts'
 import { tokenize, tokenPiece, isEndOfGeneration, isSpecialToken } from './tokenizer.ts'
 import { SequenceAllocator, type SequenceSlot } from './sequence-allocator.ts'
 
@@ -53,6 +53,8 @@ export function initModel(
     S.shim_ctx_params_set_n_seq_max(cpBuf, config.nSeqMax)
     // Total KV cache = per-sequence context × number of sequences
     S.shim_ctx_params_set_n_ctx(cpBuf, config.nCtx * config.nSeqMax)
+    // Ensure batch can hold a full single-sequence prefill
+    S.shim_ctx_params_set_n_batch(cpBuf, config.nCtx)
   }
 
   const ctxPtr = S.shim_init_from_model(modelPtr, cpBuf)
@@ -243,7 +245,14 @@ export function runEmbedBatch(
 
 export interface ParallelInferCallbacks {
   onToken: (seqIndex: number, text: string) => void
-  isAborted: (seqIndex: number) => boolean
+}
+
+export interface ParallelInferRequest {
+  prompt: string
+  maxTokens: number
+  priority?: number
+  abortFlag: Int32Array
+  collectMetrics?: boolean
 }
 
 /**
@@ -382,11 +391,15 @@ export function runInferParallel(
   const rcPrefill = S.shim_decode(ctxPtr, batchBuf)
   if (rcPrefill !== 0) throw new Error(`parallel prefill decode failed: ${rcPrefill}`)
 
-  for (const ss of seqStates) {
+  // Assign initial logit indices from prefill: each seq's last token had logits=true,
+  // stored contiguously in the order they were added to the batch.
+  for (let i = 0; i < seqStates.length; i++) {
+    const ss = seqStates[i]!
     ss.position += ss.tokens.length
     ss.prefillMs = ss.collectMetrics ? performance.now() - ss.prefillStart : 0
     ss.generateStart = ss.collectMetrics ? performance.now() : 0
     ss.slot.state = 'generating'
+    ss.batchIndex = i  // logits output index from prefill decode
   }
 
   // ── Phase 2: Generation loop (round-robin) ──
@@ -398,7 +411,7 @@ export function runInferParallel(
       if (Atomics.load(ss.abortFlag, 0) !== 0) {
         ss.aborted = true
         ss.done = true
-        L.llama_memory_seq_rm(mem, ss.slot.seqId, -1, -1)
+        L.llama_memory_seq_rm(mem, ss.slot.seqId, warmupTokens > 0 ? warmupTokens : -1, -1)
         allocator.release(ss.slot.seqId)
       }
     }
@@ -413,18 +426,18 @@ export function runInferParallel(
     for (const ss of currentActive) {
       if (ss.tokenCount >= ss.maxTokens) {
         ss.done = true
-        L.llama_memory_seq_rm(mem, ss.slot.seqId, -1, -1)
+        L.llama_memory_seq_rm(mem, ss.slot.seqId, warmupTokens > 0 ? warmupTokens : -1, -1)
         allocator.release(ss.slot.seqId)
         continue
       }
 
       const samplerPtr = samplers[ss.slot.seqId]!
-      const token = L.llama_sampler_sample(samplerPtr, ctxPtr, -1)
+      const token = L.llama_sampler_sample(samplerPtr, ctxPtr, ss.batchIndex)
       const piece = tokenPiece(L, vocabPtr, token)
 
       if (isEndOfGeneration(L, vocabPtr, token, piece)) {
         ss.done = true
-        L.llama_memory_seq_rm(mem, ss.slot.seqId, -1, -1)
+        L.llama_memory_seq_rm(mem, ss.slot.seqId, warmupTokens > 0 ? warmupTokens : -1, -1)
         allocator.release(ss.slot.seqId)
         continue
       }

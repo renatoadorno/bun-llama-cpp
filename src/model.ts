@@ -116,7 +116,6 @@ export class LlamaModel {
     return new Promise<InferResult>((resolve, reject) => {
       this._activeInfers++
       const id = crypto.randomUUID()
-      const chunks: string[] = []
 
       const abortBuf = new SharedArrayBuffer(4)
       const abortFlag = new Int32Array(abortBuf)
@@ -147,7 +146,6 @@ export class LlamaModel {
       this._registerHandler(id, (msg: WorkerResponse) => {
         switch (msg.type) {
           case 'seqToken': {
-            chunks.push(msg.text)
             options.onToken(msg.text)
             break
           }
@@ -257,7 +255,7 @@ export class LlamaModel {
   }
 
   get isReady(): boolean { return this._isReady && !this._disposed }
-  get isBusy(): boolean { return this._isBusy }
+  get isBusy(): boolean { return this._isBusy || this._activeInfers > 0 }
 
   /** Model metadata — populated during load(). */
   get metadata(): ModelMetadata { return this._metadata }
@@ -468,74 +466,24 @@ export class LlamaModel {
     }
     if (requests.length === 0) return []
 
-    return this.queue.enqueue(() => this.doInferParallel(requests))
-  }
-
-  private doInferParallel(requests: ParallelInferOptions[]): Promise<ParallelInferResult[]> {
-    return new Promise<ParallelInferResult[]>((resolve, reject) => {
-      this._isBusy = true
-      const id = crypto.randomUUID()
-      const timer = setTimeout(() => {
-        cleanupAborts.forEach(fn => fn())
-        this._unregisterHandler(id)
-        this._isBusy = false
-        reject(new Error('inferParallel timeout (300s)'))
-      }, 300_000)
-
-      // Create per-request abort buffers
-      const abortBuffers = requests.map(() => new SharedArrayBuffer(4))
-      const abortFlags = abortBuffers.map(buf => new Int32Array(buf))
-
-      // Setup per-request abort listeners
-      const cleanupAborts: (() => void)[] = []
-      for (let i = 0; i < requests.length; i++) {
-        const req = requests[i]!
-        if (req.signal) {
-          const onAbort = () => Atomics.store(abortFlags[i]!, 0, 1)
-          if (req.signal.aborted) {
-            Atomics.store(abortFlags[i]!, 0, 1)
-          } else {
-            req.signal.addEventListener('abort', onAbort, { once: true })
-            cleanupAborts.push(() => req.signal!.removeEventListener('abort', onAbort))
-          }
-        }
-      }
-
-      this._registerHandler(id, (msg: WorkerResponse) => {
-        if (msg.type === 'parallelToken') {
-          const req = requests[msg.seqIndex]
-          if (req) req.onToken(msg.text)
-        } else if (msg.type === 'inferParallelResult') {
-          clearTimeout(timer)
-          cleanupAborts.forEach(fn => fn())
-          this._unregisterHandler(id)
-          this._isBusy = false
-          resolve(msg.results)
-        } else if (msg.type === 'error') {
-          clearTimeout(timer)
-          cleanupAborts.forEach(fn => fn())
-          this._unregisterHandler(id)
-          this._isBusy = false
-          reject(new Error(msg.message))
-        }
+    // Route through batch engine via concurrent infers — avoids separate
+    // SequenceAllocator/context conflicts with the BatchEngine.
+    const promises = requests.map(req =>
+      this.doConcurrentInfer(req.prompt, {
+        onToken: req.onToken,
+        maxTokens: req.maxTokens,
+        signal: req.signal,
+        metrics: req.metrics,
       })
+    )
 
-      const workerRequests = requests.map((req, i) => ({
-        prompt: req.prompt,
-        maxTokens: req.maxTokens ?? 512,
-        priority: req.priority ?? 0,
-        abortFlag: abortFlags[i]!,
-        collectMetrics: req.metrics ?? false,
-      }))
-
-      const inferMsg: WorkerRequest = {
-        type: 'inferParallel',
-        id,
-        requests: workerRequests,
-        warmupTokens: this._warmupTokens,
-      }
-      this.worker.postMessage(inferMsg)
-    })
+    const results = await Promise.all(promises)
+    return results.map(r => ({
+      text: r.text,
+      tokenCount: r.tokenCount,
+      aborted: r.aborted,
+      metrics: r.metrics,
+    }))
   }
 
   /** Graceful shutdown — frees GPU/Metal buffers before terminating. */

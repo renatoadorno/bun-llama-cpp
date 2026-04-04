@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from 'bun:ffi'
 import type { WorkerRequest, WorkerResponse } from '../types.ts'
 import { openLibraries } from './ffi.ts'
-import { initModel, runInference, runEmbed, runEmbedBatch, runInferParallel, warmupPrefix, cleanup, collectMetadata, type LlamaState } from './inference.ts'
+import { initModel, runInference, runEmbed, runEmbedBatch, warmupPrefix, cleanup, collectMetadata, type LlamaState } from './inference.ts'
 import { BatchEngine } from './batch-engine.ts'
 import { resolveLibPaths } from '../lib-resolver.ts'
 
@@ -236,7 +236,6 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         post({ type: 'error', id: msg.id, message: 'Batch engine not available (requires nSeqMax > 1)' })
         break
       }
-      muteStderr()
       batchEngine.enqueue({
         id: msg.id,
         prompt: msg.prompt,
@@ -249,27 +248,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       break
     }
 
-    case 'inferParallel': {
-      if (!libs || !state) {
-        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
-        break
-      }
-      try {
-        muteStderr()
-        const results = runInferParallel(libs.L, libs.S, state, msg.requests, {
-          onToken: (seqIndex, text) => post({ type: 'parallelToken', id: msg.id, seqIndex, text }),
-        }, msg.warmupTokens)
-        restoreStderr()
-        post({ type: 'inferParallelResult', id: msg.id, results })
-      } catch (e) {
-        restoreStderr()
-        post({ type: 'error', id: msg.id, message: String(e) })
-      }
-      break
-    }
-
     case 'shutdown': {
       muteStderr()
+      if (batchEngine) batchEngine.shutdown()
       if (libs && state) {
         cleanup(libs.L, libs.S, state)
       }
