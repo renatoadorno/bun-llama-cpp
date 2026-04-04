@@ -308,7 +308,14 @@ export class BatchEngine {
     // ── Single decode for all active sequences ──
     if (batchPos > 0) {
       const rc = this.S.shim_decode(ctxPtr, batchBuf)
-      if (rc !== 0) throw new Error(`continuous batch decode failed: ${rc}`)
+      if (rc !== 0) {
+        const seqIds = this.active.map(s => s.seqId).join(',')
+        const hint = rc === 1 ? ' — no KV slot found. Reduce prompt length or increase nCtx.' : ''
+        throw new Error(
+          `Batch decode failed (code ${rc})${hint} — ` +
+          `batch=${batchPos} tokens, active sequences=[${seqIds}]`
+        )
+      }
     }
 
     // ── Transition prefilled sequences to generating ──

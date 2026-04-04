@@ -147,7 +147,12 @@ export function runInference(
   }
   const prefillStart = callbacks.collectMetrics ? performance.now() : 0
   const rc = S.shim_decode(ctxPtr, batchBuf)
-  if (rc !== 0) throw new Error(`llama_decode (prefill) failed: ${rc}`)
+  if (rc !== 0) {
+    const hint = rc === 1
+      ? ' — no KV slot found. Reduce prompt length or increase nCtx.'
+      : rc < 0 ? ' — internal error' : ''
+    throw new Error(`Prefill decode failed (code ${rc})${hint}`)
+  }
   const prefillMs = callbacks.collectMetrics ? performance.now() - prefillStart : 0
 
   // Generation loop
@@ -176,7 +181,7 @@ export function runInference(
     const ok = S.shim_batch_add(batchBuf, state.batchCapacity, token, pos, 0, true)
     if (!ok) throw new Error(`Batch full at generation step — position ${pos} exceeds capacity ${state.batchCapacity}`)
     const rc2 = S.shim_decode(ctxPtr, batchBuf)
-    if (rc2 !== 0) throw new Error(`llama_decode (step ${i}) failed: ${rc2}`)
+    if (rc2 !== 0) throw new Error(`Generation decode failed at step ${i}/${maxTokens} (code ${rc2}, pos=${pos})`)
     pos++
   }
 

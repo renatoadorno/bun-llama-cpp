@@ -7,6 +7,7 @@ const EOT_TEXTS = new Set([
 
 /** Tokenize text into an Int32Array of token IDs. */
 export function tokenize(L: LibLlama, vocabPtr: number, text: string): Int32Array {
+  if (!text) throw new Error('Cannot tokenize empty string')
   const textBuf = Buffer.from(text + '\0', 'utf8')
   const tokBuf = new Int32Array(textBuf.length)
   const n = L.llama_tokenize(
@@ -15,7 +16,10 @@ export function tokenize(L: LibLlama, vocabPtr: number, text: string): Int32Arra
     true,  // add_special (BOS)
     true,  // parse_special — so <|im_start|>/<|im_end|> become real tokens
   )
-  if (n < 0) throw new Error(`Tokenization failed (code ${n})`)
+  if (n < 0) throw new Error(
+    `Tokenization failed (code ${n}): input is ${textBuf.length - 1} bytes, ` +
+    `buffer has ${tokBuf.length} token slots. Input may be too long for a single batch.`
+  )
   return tokBuf.subarray(0, n)
 }
 
