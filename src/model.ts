@@ -7,9 +7,19 @@ import type {
   FimTokens,
   ModelMetadata,
   ChatMessage,
+  ParallelInferResult,
   WorkerRequest,
   WorkerResponse,
 } from './types.ts'
+
+export interface ParallelInferOptions {
+  prompt: string
+  onToken: (text: string) => void
+  maxTokens?: number
+  signal?: AbortSignal
+  priority?: number
+  metrics?: boolean
+}
 
 export class LlamaModel {
   private worker: Worker
@@ -19,6 +29,8 @@ export class LlamaModel {
   private _disposed = false
   private _metadata!: ModelMetadata
   private _embeddingMode = false
+  private _nSeqMax = 1
+  private _warmupTokens = 0
 
   private constructor(worker: Worker) {
     this.worker = worker
@@ -40,6 +52,7 @@ export class LlamaModel {
           instance._metadata = msg.metadata
           instance._isReady = true
           instance._embeddingMode = resolved.embeddings
+          instance._nSeqMax = resolved.nSeqMax
           resolve()
         } else if (msg.type === 'error') {
           clearTimeout(timer)
@@ -276,6 +289,121 @@ export class LlamaModel {
 
       const req: WorkerRequest = { type: 'embedBatch', id, texts }
       this.worker.postMessage(req)
+    })
+  }
+
+  /**
+   * Pre-compute KV cache for a shared system prompt.
+   * Subsequent inferParallel calls will share this prefix via O(1) KV copy.
+   * Only works when nSeqMax > 1.
+   */
+  async warmup(systemPrompt: string): Promise<number> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+    if (this._embeddingMode) throw new Error('Cannot warmup an embedding model')
+    if (this._nSeqMax <= 1) throw new Error('warmup requires nSeqMax > 1')
+
+    return this.queue.enqueue(() => this.doWarmup(systemPrompt))
+  }
+
+  private doWarmup(systemPrompt: string): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => reject(new Error('warmup timeout (60s)')), 60_000)
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+        if (msg.type === 'warmupDone' && msg.id === id) {
+          clearTimeout(timer)
+          this._warmupTokens = msg.tokenCount
+          resolve(msg.tokenCount)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          clearTimeout(timer)
+          reject(new Error(msg.message))
+        }
+      }
+
+      const req: WorkerRequest = { type: 'warmup', id, systemPrompt }
+      this.worker.postMessage(req)
+    })
+  }
+
+  /**
+   * Run multiple inferences in parallel using separate sequence slots.
+   * All sequences are decoded in the same GPU batch for maximum throughput.
+   * Requires nSeqMax > 1.
+   *
+   * If warmup() was called, the pre-computed system prompt KV is shared
+   * across all sequences via O(1) copy.
+   */
+  async inferParallel(requests: ParallelInferOptions[]): Promise<ParallelInferResult[]> {
+    if (this._disposed) throw new Error('Model has been disposed')
+    if (!this._isReady) throw new Error('Model is not ready')
+    if (this._embeddingMode) throw new Error('Cannot call inferParallel on an embedding model')
+    if (this._nSeqMax <= 1) throw new Error('inferParallel requires nSeqMax > 1')
+    if (requests.length > this._nSeqMax) {
+      throw new Error(`Too many parallel requests (${requests.length}) for nSeqMax=${this._nSeqMax}`)
+    }
+    if (requests.length === 0) return []
+
+    return this.queue.enqueue(() => this.doInferParallel(requests))
+  }
+
+  private doInferParallel(requests: ParallelInferOptions[]): Promise<ParallelInferResult[]> {
+    return new Promise<ParallelInferResult[]>((resolve, reject) => {
+      this._isBusy = true
+      const id = crypto.randomUUID()
+
+      // Create per-request abort buffers
+      const abortBuffers = requests.map(() => new SharedArrayBuffer(4))
+      const abortFlags = abortBuffers.map(buf => new Int32Array(buf))
+
+      // Setup per-request abort listeners
+      const cleanupAborts: (() => void)[] = []
+      for (let i = 0; i < requests.length; i++) {
+        const req = requests[i]!
+        if (req.signal) {
+          const onAbort = () => Atomics.store(abortFlags[i]!, 0, 1)
+          if (req.signal.aborted) {
+            Atomics.store(abortFlags[i]!, 0, 1)
+          } else {
+            req.signal.addEventListener('abort', onAbort, { once: true })
+            cleanupAborts.push(() => req.signal!.removeEventListener('abort', onAbort))
+          }
+        }
+      }
+
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const msg = event.data
+
+        if (msg.type === 'parallelToken' && msg.id === id) {
+          const req = requests[msg.seqIndex]
+          if (req) req.onToken(msg.text)
+        } else if (msg.type === 'inferParallelResult' && msg.id === id) {
+          cleanupAborts.forEach(fn => fn())
+          this._isBusy = false
+          resolve(msg.results)
+        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+          cleanupAborts.forEach(fn => fn())
+          this._isBusy = false
+          reject(new Error(msg.message))
+        }
+      }
+
+      const workerRequests = requests.map((req, i) => ({
+        prompt: req.prompt,
+        maxTokens: req.maxTokens ?? 512,
+        priority: req.priority ?? 0,
+        abortFlag: abortFlags[i]!,
+        collectMetrics: req.metrics ?? false,
+      }))
+
+      const inferMsg: WorkerRequest = {
+        type: 'inferParallel',
+        id,
+        requests: workerRequests,
+      }
+      this.worker.postMessage(inferMsg)
     })
   }
 

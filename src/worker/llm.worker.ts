@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from 'bun:ffi'
 import type { WorkerRequest, WorkerResponse } from '../types.ts'
 import { openLibraries } from './ffi.ts'
-import { initModel, runInference, runEmbed, runEmbedBatch, cleanup, collectMetadata, type LlamaState } from './inference.ts'
+import { initModel, runInference, runEmbed, runEmbedBatch, runInferParallel, warmupPrefix, cleanup, collectMetadata, type LlamaState } from './inference.ts'
 import { resolveLibPaths } from '../lib-resolver.ts'
 
 declare var self: Worker
@@ -188,6 +188,43 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const vectors = runEmbedBatch(libs.L, libs.S, state, msg.texts)
         restoreStderr()
         post({ type: 'embedBatchResult', id: msg.id, vectors })
+      } catch (e) {
+        restoreStderr()
+        post({ type: 'error', id: msg.id, message: String(e) })
+      }
+      break
+    }
+
+    case 'warmup': {
+      if (!libs || !state) {
+        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      try {
+        muteStderr()
+        const tokenCount = warmupPrefix(libs.L, libs.S, state, msg.systemPrompt)
+        restoreStderr()
+        post({ type: 'warmupDone', id: msg.id, tokenCount })
+      } catch (e) {
+        restoreStderr()
+        post({ type: 'error', id: msg.id, message: String(e) })
+      }
+      break
+    }
+
+    case 'inferParallel': {
+      if (!libs || !state) {
+        post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      try {
+        muteStderr()
+        const results = runInferParallel(libs.L, libs.S, state, msg.requests, {
+          onToken: (seqIndex, text) => post({ type: 'parallelToken', id: msg.id, seqIndex, text }),
+          isAborted: (seqIndex) => Atomics.load(msg.requests[seqIndex]!.abortFlag, 0) === 1,
+        })
+        restoreStderr()
+        post({ type: 'inferParallelResult', id: msg.id, results })
       } catch (e) {
         restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })

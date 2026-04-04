@@ -103,6 +103,14 @@ void shim_ctx_params_set_pooling_type(struct llama_context_params *p, int32_t ty
     p->pooling_type = (enum llama_pooling_type)type;
 }
 
+void shim_ctx_params_set_n_seq_max(struct llama_context_params *p, int32_t n) {
+    p->n_seq_max = (uint32_t)n;
+}
+
+void shim_ctx_params_set_n_batch(struct llama_context_params *p, int32_t n) {
+    p->n_batch = (uint32_t)n;
+}
+
 /* shim_encode: wraps llama_encode (takes llama_batch by value) */
 int32_t shim_encode(struct llama_context *ctx, struct llama_batch *batch) {
     return llama_encode(ctx, *batch);
