@@ -30,9 +30,20 @@ const PRESETS: Record<Preset, ResolvedConfig> = {
   },
 }
 
+function validateConfig(config: ResolvedConfig): void {
+  if (!Number.isInteger(config.nSeqMax) || config.nSeqMax < 1 || config.nSeqMax > 128)
+    throw new Error(`nSeqMax must be between 1 and 128 (got ${config.nSeqMax})`)
+  if (!Number.isInteger(config.nCtx) || config.nCtx < 128 || config.nCtx > 131072)
+    throw new Error(`nCtx must be between 128 and 131072 (got ${config.nCtx})`)
+  if (!Number.isInteger(config.maxTokens) || config.maxTokens < 1 || config.maxTokens > 131072)
+    throw new Error(`maxTokens must be between 1 and 131072 (got ${config.maxTokens})`)
+  if (!Number.isInteger(config.nThreads) || config.nThreads < 1 || config.nThreads > 256)
+    throw new Error(`nThreads must be between 1 and 256 (got ${config.nThreads})`)
+}
+
 export function resolveConfig(config?: ModelConfig): ResolvedConfig {
   const base = PRESETS[config?.preset ?? 'medium']
-  return {
+  const resolved: ResolvedConfig = {
     nCtx:       config?.nCtx       ?? base.nCtx,
     nThreads:   config?.nThreads   ?? base.nThreads,
     nGpuLayers: config?.nGpuLayers ?? base.nGpuLayers,
@@ -45,4 +56,6 @@ export function resolveConfig(config?: ModelConfig): ResolvedConfig {
     poolingType: config?.poolingType ?? 0,
     nSeqMax:     config?.nSeqMax     ?? 1,
   }
+  validateConfig(resolved)
+  return resolved
 }

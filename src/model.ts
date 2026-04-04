@@ -102,6 +102,7 @@ export class LlamaModel {
     if (this._disposed) throw new Error('Model has been disposed')
     if (!this._isReady) throw new Error('Model is not ready')
     if (this._embeddingMode) throw new Error('Cannot call infer() on an embedding model — use embed() or embedMany()')
+    if (!prompt || typeof prompt !== 'string') throw new Error('prompt must be a non-empty string')
 
     // Continuous batching: bypass serial queue, join batch engine
     if (this._nSeqMax > 1) {
@@ -418,6 +419,8 @@ export class LlamaModel {
     if (!this._isReady) throw new Error('Model is not ready')
     if (this._embeddingMode) throw new Error('Cannot warmup an embedding model')
     if (this._nSeqMax <= 1) throw new Error('warmup requires nSeqMax > 1')
+    if (this._activeInfers > 0) throw new Error('Cannot warmup while inferences are active — wait for all inferences to complete first')
+    if (!systemPrompt || typeof systemPrompt !== 'string') throw new Error('systemPrompt must be a non-empty string')
 
     return this.queue.enqueue(() => this.doWarmup(systemPrompt))
   }
@@ -465,6 +468,10 @@ export class LlamaModel {
       throw new Error(`Too many parallel requests (${requests.length}) for nSeqMax=${this._nSeqMax}`)
     }
     if (requests.length === 0) return []
+    for (let i = 0; i < requests.length; i++) {
+      if (!requests[i]!.prompt || typeof requests[i]!.prompt !== 'string')
+        throw new Error(`requests[${i}].prompt must be a non-empty string`)
+    }
 
     // Route through batch engine via concurrent infers — avoids separate
     // SequenceAllocator/context conflicts with the BatchEngine.
