@@ -138,13 +138,26 @@ export class BatchEngine {
     }
   }
 
+  private assertSeqId(seqId: number): void {
+    if (seqId < 0 || seqId >= this.state.nSeqMax)
+      throw new Error(`seqId ${seqId} out of bounds [0, ${this.state.nSeqMax})`)
+  }
+
   private admitPending(): void {
     while (this.pending.length > 0 && this.allocator.hasFreeSlots()) {
       const req = this.pending.shift()!
       const slot = this.allocator.acquire(req.id, req.priority)
       if (!slot) break
 
+      this.assertSeqId(slot.seqId)
+
       const tokens = tokenize(this.L, this.state.vocabPtr, req.prompt)
+      if (tokens.length === 0) {
+        this.allocator.release(slot.seqId)
+        this.callbacks.onError(req.id, 'Prompt produced 0 tokens after tokenization — check prompt content')
+        continue
+      }
+
       const samplerPtr = this.state.samplers[slot.seqId]!
       this.L.llama_sampler_reset(samplerPtr)
 
@@ -152,12 +165,9 @@ export class BatchEngine {
 
       // Setup KV cache for this sequence
       if (req.warmupTokens > 0 && slot.seqId !== 0) {
-        // Clean any previous user tokens, then copy warmup prefix from seq 0.
-        // llama.cpp requires full-buffer copy for cross-stream seq_cp (p0=-1, p1=-1).
         this.L.llama_memory_seq_rm(mem, slot.seqId, -1, -1)
         this.L.llama_memory_seq_cp(mem, 0, slot.seqId, -1, -1)
       } else if (req.warmupTokens > 0 && slot.seqId === 0) {
-        // seq 0 already has prefix — clear only user tokens
         this.L.llama_memory_seq_rm(mem, slot.seqId, req.warmupTokens, -1)
       } else {
         this.L.llama_memory_seq_rm(mem, slot.seqId, -1, -1)
@@ -220,6 +230,11 @@ export class BatchEngine {
     const sampled: { seq: ActiveSeq; token: number }[] = []
 
     for (const seq of generating) {
+      if (seq.batchIndex < 0) {
+        finished.push(seq)
+        this.callbacks.onError(seq.id, 'Internal error: sequence reached generation with invalid batchIndex')
+        continue
+      }
       if (seq.tokenCount >= seq.maxTokens) {
         finished.push(seq)
         continue
@@ -261,7 +276,18 @@ export class BatchEngine {
     }
 
     // ── Part B: Add prefill tokens for new sequences ──
+    // Pre-check capacity: only admit prefills that fit in remaining budget
+    let budgetRemaining = this.state.batchCapacity - sampled.length
+    const fittingPrefills: ActiveSeq[] = []
     for (const seq of needsPrefill) {
+      if (seq.tokens.length <= budgetRemaining) {
+        fittingPrefills.push(seq)
+        budgetRemaining -= seq.tokens.length
+      }
+      // else: stays in active as pending_prefill, will be tried next step
+    }
+
+    for (const seq of fittingPrefills) {
       seq.prefillStart = seq.collectMetrics ? performance.now() : 0
       for (let i = 0; i < seq.tokens.length; i++) {
         const isLast = (i === seq.tokens.length - 1)
@@ -286,7 +312,7 @@ export class BatchEngine {
     }
 
     // ── Transition prefilled sequences to generating ──
-    for (const seq of needsPrefill) {
+    for (const seq of fittingPrefills) {
       seq.position += seq.tokens.length
       seq.prefillMs = seq.collectMetrics ? performance.now() - seq.prefillStart : 0
       seq.generateStart = seq.collectMetrics ? performance.now() : 0
