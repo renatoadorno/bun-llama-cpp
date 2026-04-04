@@ -55,9 +55,12 @@ void shim_batch_clear(struct llama_batch *batch) {
     batch->n_tokens = 0;
 }
 
-/* id=token_id, pos=position, seq_id=sequence index, logits=compute output */
-void shim_batch_add(struct llama_batch *batch,
+/* id=token_id, pos=position, seq_id=sequence index, logits=compute output
+ * capacity = max tokens allocated by llama_batch_init (prevents overflow)
+ * Returns false if batch is full. */
+bool shim_batch_add(struct llama_batch *batch, int32_t capacity,
                     int32_t id, int32_t pos, int32_t seq_id, bool logits) {
+    if (batch->n_tokens >= capacity) return false;
     int n = batch->n_tokens;
     batch->token   [n]    = id;
     batch->pos     [n]    = pos;
@@ -65,6 +68,7 @@ void shim_batch_add(struct llama_batch *batch,
     batch->seq_id  [n][0] = seq_id;
     batch->logits  [n]    = logits ? 1 : 0;
     batch->n_tokens++;
+    return true;
 }
 
 void shim_batch_free(struct llama_batch *batch) {

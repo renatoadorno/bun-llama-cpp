@@ -152,9 +152,10 @@ export class BatchEngine {
 
       // Setup KV cache for this sequence
       if (req.warmupTokens > 0 && slot.seqId !== 0) {
-        // Clean any previous user tokens, then copy warmup prefix
+        // Clean any previous user tokens, then copy warmup prefix from seq 0.
+        // llama.cpp requires full-buffer copy for cross-stream seq_cp (p0=-1, p1=-1).
         this.L.llama_memory_seq_rm(mem, slot.seqId, -1, -1)
-        this.L.llama_memory_seq_cp(mem, 0, slot.seqId, 0, req.warmupTokens)
+        this.L.llama_memory_seq_cp(mem, 0, slot.seqId, -1, -1)
       } else if (req.warmupTokens > 0 && slot.seqId === 0) {
         // seq 0 already has prefix — clear only user tokens
         this.L.llama_memory_seq_rm(mem, slot.seqId, req.warmupTokens, -1)
@@ -209,12 +210,15 @@ export class BatchEngine {
     const { ctxPtr, vocabPtr, samplers, batchBuf } = this.state
     const generating = this.active.filter(s => s.state === 'generating')
     const needsPrefill = this.active.filter(s => s.state === 'pending_prefill')
-
-    this.S.shim_batch_clear(batchBuf)
-    let logitIdx = 0
     const finished: ActiveSeq[] = []
 
-    // ── Part A: Sample from generating sequences (using previous decode's logits) ──
+    // ── Part A: Sample from generating sequences ──
+    // Must sample BEFORE clearing the batch — seq.batchIndex is a batch token
+    // position from the previous decode, and output_ids maps those positions
+    // to logit rows. Clearing + rebuilding the batch first would make the
+    // old batchIndex point at a different token.
+    const sampled: { seq: ActiveSeq; token: number }[] = []
+
     for (const seq of generating) {
       if (seq.tokenCount >= seq.maxTokens) {
         finished.push(seq)
@@ -238,10 +242,22 @@ export class BatchEngine {
         this.callbacks.onToken(seq.id, piece)
       }
 
-      // Add sampled token to the unified batch (logits=true)
-      this.S.shim_batch_add(batchBuf, token, seq.position, seq.seqId, true)
+      sampled.push({ seq, token })
+    }
+
+    // ── Clear batch and build new one ──
+    // batchPos tracks the actual batch token position (index into the batch
+    // arrays). llama_sampler_sample needs this — NOT the output row index.
+    this.S.shim_batch_clear(batchBuf)
+    let batchPos = 0
+
+    // Add sampled tokens for generating sequences (all logits=true)
+    for (const { seq, token } of sampled) {
+      const ok = this.S.shim_batch_add(batchBuf, this.state.batchCapacity, token, seq.position, seq.seqId, true)
+      if (!ok) throw new Error(`Batch full during generation — capacity ${this.state.batchCapacity} exceeded`)
       seq.position++
-      seq.batchIndex = logitIdx++
+      seq.batchIndex = batchPos
+      batchPos++
     }
 
     // ── Part B: Add prefill tokens for new sequences ──
@@ -249,8 +265,10 @@ export class BatchEngine {
       seq.prefillStart = seq.collectMetrics ? performance.now() : 0
       for (let i = 0; i < seq.tokens.length; i++) {
         const isLast = (i === seq.tokens.length - 1)
-        this.S.shim_batch_add(batchBuf, seq.tokens[i]!, seq.position + i, seq.seqId, isLast)
-        if (isLast) seq.batchIndex = logitIdx++
+        const ok = this.S.shim_batch_add(batchBuf, this.state.batchCapacity, seq.tokens[i]!, seq.position + i, seq.seqId, isLast)
+        if (!ok) throw new Error(`Batch overflow during prefill for seqId=${seq.seqId} — token ${i}/${seq.tokens.length} exceeds capacity ${this.state.batchCapacity}`)
+        if (isLast) seq.batchIndex = batchPos
+        batchPos++
       }
     }
 
@@ -262,7 +280,7 @@ export class BatchEngine {
     }
 
     // ── Single decode for all active sequences ──
-    if (logitIdx > 0) {
+    if (batchPos > 0) {
       const rc = this.S.shim_decode(ctxPtr, batchBuf)
       if (rc !== 0) throw new Error(`continuous batch decode failed: ${rc}`)
     }

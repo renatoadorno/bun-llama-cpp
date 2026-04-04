@@ -85,7 +85,7 @@ export interface LibShims {
 
   shim_batch_init: (buf: Buffer, nTokens: number, embd: number, nSeqMax: number) => void
   shim_batch_clear: (buf: Buffer) => void
-  shim_batch_add: (buf: Buffer, id: number, pos: number, seqId: number, logits: boolean) => void
+  shim_batch_add: (buf: Buffer, capacity: number, id: number, pos: number, seqId: number, logits: boolean) => boolean
   shim_batch_free: (buf: Buffer) => void
   shim_decode: (ctx: number, buf: Buffer) => number
 
@@ -193,8 +193,8 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_batch_init:  { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.void },
     shim_batch_clear: { args: [FFIType.ptr],                                          returns: FFIType.void },
     shim_batch_add:   {
-      args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.bool],
-      returns: FFIType.void,
+      args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.bool],
+      returns: FFIType.bool,
     },
     shim_batch_free:  { args: [FFIType.ptr],              returns: FFIType.void },
     shim_decode:      { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32  },
