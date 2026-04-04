@@ -89,7 +89,7 @@ export interface ResolvedConfig {
 export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
-  | { type: 'startInfer'; id: string; prompt: string; maxTokens: number; priority: number; abortFlag: Int32Array; collectMetrics: boolean; warmupTokens: number }
+  | { type: 'startInfer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean; warmupTokens: number }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
   | { type: 'embed';      id: string; text: string }

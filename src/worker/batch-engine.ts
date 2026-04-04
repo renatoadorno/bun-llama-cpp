@@ -8,7 +8,6 @@ export interface BatchRequest {
   id: string
   prompt: string
   maxTokens: number
-  priority: number
   abortFlag: Int32Array
   collectMetrics: boolean
   warmupTokens: number
@@ -146,7 +145,7 @@ export class BatchEngine {
   private admitPending(): void {
     while (this.pending.length > 0 && this.allocator.hasFreeSlots()) {
       const req = this.pending.shift()!
-      const slot = this.allocator.acquire(req.id, req.priority)
+      const slot = this.allocator.acquire()
       if (!slot) break
 
       this.assertSeqId(slot.seqId)
@@ -177,7 +176,7 @@ export class BatchEngine {
         id: req.id,
         seqId: slot.seqId,
         tokens,
-        position: req.warmupTokens,
+        position: 0,
         maxTokens: req.maxTokens,
         tokenCount: 0,
         aborted: false,
@@ -280,18 +279,20 @@ export class BatchEngine {
     let budgetRemaining = this.state.batchCapacity - sampled.length
     const fittingPrefills: ActiveSeq[] = []
     for (const seq of needsPrefill) {
-      if (seq.tokens.length <= budgetRemaining) {
+      const prefillTokens = seq.tokens.length - seq.warmupTokens
+      if (prefillTokens <= budgetRemaining) {
         fittingPrefills.push(seq)
-        budgetRemaining -= seq.tokens.length
+        budgetRemaining -= prefillTokens
       }
       // else: stays in active as pending_prefill, will be tried next step
     }
 
     for (const seq of fittingPrefills) {
       seq.prefillStart = seq.collectMetrics ? performance.now() : 0
-      for (let i = 0; i < seq.tokens.length; i++) {
+      const startIdx = seq.warmupTokens
+      for (let i = startIdx; i < seq.tokens.length; i++) {
         const isLast = (i === seq.tokens.length - 1)
-        const ok = this.S.shim_batch_add(batchBuf, this.state.batchCapacity, seq.tokens[i]!, seq.position + i, seq.seqId, isLast)
+        const ok = this.S.shim_batch_add(batchBuf, this.state.batchCapacity, seq.tokens[i]!, i, seq.seqId, isLast)
         if (!ok) throw new Error(`Batch overflow during prefill for seqId=${seq.seqId} — token ${i}/${seq.tokens.length} exceeds capacity ${this.state.batchCapacity}`)
         if (isLast) seq.batchIndex = batchPos
         batchPos++
@@ -320,7 +321,7 @@ export class BatchEngine {
 
     // ── Transition prefilled sequences to generating ──
     for (const seq of fittingPrefills) {
-      seq.position += seq.tokens.length
+      seq.position = seq.tokens.length
       seq.prefillMs = seq.collectMetrics ? performance.now() - seq.prefillStart : 0
       seq.generateStart = seq.collectMetrics ? performance.now() : 0
       seq.state = 'generating'

@@ -248,7 +248,6 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         id: msg.id,
         prompt: msg.prompt,
         maxTokens: msg.maxTokens,
-        priority: msg.priority,
         abortFlag: msg.abortFlag,
         collectMetrics: msg.collectMetrics,
         warmupTokens: msg.warmupTokens,
@@ -257,7 +256,6 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     }
 
     case 'shutdown': {
-      restoreStderr()
       if (batchEngine) batchEngine.shutdown()
       if (libs && state) {
         cleanup(libs.L, libs.S, state)

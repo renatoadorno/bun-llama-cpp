@@ -17,7 +17,6 @@ export interface ParallelInferOptions {
   onToken: (text: string) => void
   maxTokens?: number
   signal?: AbortSignal
-  priority?: number
   metrics?: boolean
 }
 
@@ -173,7 +172,6 @@ export class LlamaModel {
         id,
         prompt,
         maxTokens: options.maxTokens ?? 512,
-        priority: 0,
         abortFlag,
         collectMetrics: options.metrics ?? false,
         warmupTokens: this._warmupTokens,

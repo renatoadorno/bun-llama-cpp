@@ -1,10 +1,6 @@
-/** Sequence slot state for parallel inference. */
+/** Sequence slot for parallel inference. */
 export interface SequenceSlot {
   seqId: number
-  state: 'idle' | 'prefilling' | 'generating'
-  position: number
-  requestId: string
-  priority: number
 }
 
 /**
@@ -19,17 +15,11 @@ export class SequenceAllocator {
     this.free = Array.from({ length: nSeqMax }, (_, i) => i)
   }
 
-  acquire(requestId: string, priority = 0): SequenceSlot | null {
+  acquire(): SequenceSlot | null {
     const seqId = this.free.pop()
     if (seqId === undefined) return null
 
-    const slot: SequenceSlot = {
-      seqId,
-      state: 'idle',
-      position: 0,
-      requestId,
-      priority,
-    }
+    const slot: SequenceSlot = { seqId }
     this.active.set(seqId, slot)
     return slot
   }
@@ -42,10 +32,6 @@ export class SequenceAllocator {
 
   getActive(): SequenceSlot[] {
     return [...this.active.values()]
-  }
-
-  getSlot(seqId: number): SequenceSlot | undefined {
-    return this.active.get(seqId)
   }
 
   hasFreeSlots(): boolean {

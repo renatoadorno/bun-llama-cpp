@@ -76,24 +76,6 @@ describe('inferParallel', () => {
   }, 180_000)
 })
 
-describe('warmup + prefix sharing', () => {
-  test('warmup returns positive token count', async () => {
-    const count = await llm.warmup('You are a helpful assistant.')
-    expect(count).toBeGreaterThan(0)
-  }, 60_000)
-
-  test('parallel infer after warmup produces output', async () => {
-    const results = await llm.inferParallel([
-      { prompt: 'What is 2+2? /no_think', onToken: () => {}, maxTokens: 20 },
-      { prompt: 'What is 3+3? /no_think', onToken: () => {}, maxTokens: 20 },
-    ])
-
-    expect(results).toHaveLength(2)
-    expect(results[0]!.text.length).toBeGreaterThan(0)
-    expect(results[1]!.text.length).toBeGreaterThan(0)
-  }, 180_000)
-})
-
 describe('concurrent infer (nSeqMax > 1)', () => {
   test('Promise.all with two infer() calls resolves both', async () => {
     const [r1, r2] = await Promise.all([
@@ -117,9 +99,9 @@ describe('error handling', () => {
   }, 120_000)
 
   test('warmup rejects while inferences are active', async () => {
-    const inferPromise = llm.infer('Tell me a story /no_think', {
+    const inferPromise = llm.infer('Say hi /no_think', {
       onToken: () => {},
-      maxTokens: 50,
+      maxTokens: 20,
     })
     // warmup should reject because _activeInfers > 0
     await expect(llm.warmup('system')).rejects.toThrow('active')
@@ -130,4 +112,45 @@ describe('error handling', () => {
     expect(llm.infer('', { onToken: () => {}, maxTokens: 10 }))
       .rejects.toThrow('non-empty')
   })
+})
+
+// Warmup tests run LAST because they set _warmupTokens which affects
+// all subsequent infer() calls (prefix sharing skips first N tokens).
+describe('warmup + prefix sharing', () => {
+  test('warmup returns positive token count', async () => {
+    const count = await llm.warmup('You are a helpful assistant.')
+    expect(count).toBeGreaterThan(0)
+  }, 60_000)
+
+  test('parallel infer after warmup produces output', async () => {
+    const sysPrefix = 'You are a helpful assistant.'
+    const results = await llm.inferParallel([
+      { prompt: sysPrefix + ' What is 2+2? /no_think', onToken: () => {}, maxTokens: 20 },
+      { prompt: sysPrefix + ' What is 3+3? /no_think', onToken: () => {}, maxTokens: 20 },
+    ])
+
+    expect(results).toHaveLength(2)
+    expect(results[0]!.text.length).toBeGreaterThan(0)
+    expect(results[1]!.text.length).toBeGreaterThan(0)
+  }, 180_000)
+
+  test('prefix sharing reduces prefill work with metrics', async () => {
+    const sysPrompt = 'You are a helpful math tutor. Always show your work step by step.'
+    const warmupCount = await llm.warmup(sysPrompt)
+    expect(warmupCount).toBeGreaterThan(0)
+
+    const results = await llm.inferParallel([
+      {
+        prompt: sysPrompt + ' What is 2+2? /no_think',
+        onToken: () => {},
+        maxTokens: 10,
+        metrics: true,
+      },
+    ])
+
+    expect(results[0]!.text.length).toBeGreaterThan(0)
+    expect(results[0]!.metrics).toBeDefined()
+    // promptTokens reflects full prompt length, which must be greater than warmup count
+    expect(results[0]!.metrics!.promptTokens).toBeGreaterThan(warmupCount)
+  }, 180_000)
 })
