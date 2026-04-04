@@ -7,9 +7,12 @@ export interface LlamaState {
   modelPtr: number
   ctxPtr: number
   vocabPtr: number
-  samplerPtr: number | null  // null in embedding mode
+  samplerPtr: number | null  // null in embedding mode (primary sampler / single-seq)
+  samplers: number[]         // per-sequence samplers (length = nSeqMax)
   batchBuf: Buffer
   chatTemplatePtr: number
+  nSeqMax: number
+  batchCapacity: number      // max tokens per batch (n_tokens passed to shim_batch_init)
 }
 
 /** Initialize llama backend, load model, create context and sampler. */
@@ -46,39 +49,53 @@ export function initModel(
     S.shim_ctx_params_set_pooling_type(cpBuf, config.poolingType)
   }
 
+  if (config.nSeqMax > 1) {
+    S.shim_ctx_params_set_n_seq_max(cpBuf, config.nSeqMax)
+    // Total KV cache = per-sequence context × number of sequences
+    S.shim_ctx_params_set_n_ctx(cpBuf, config.nCtx * config.nSeqMax)
+    // Ensure batch can hold a full single-sequence prefill
+    S.shim_ctx_params_set_n_batch(cpBuf, config.nCtx)
+  }
+
   const ctxPtr = S.shim_init_from_model(modelPtr, cpBuf)
   if (!ctxPtr) throw new Error('Failed to create context')
 
   // Batch buffer (persistent — internal arrays allocated by libllama)
+  const batchCapacity = config.nCtx
   const batchBuf = Buffer.alloc(Number(S.shim_sizeof_batch()))
-  S.shim_batch_init(batchBuf, config.nCtx, 0, 1)
+  S.shim_batch_init(batchBuf, batchCapacity, 0, config.nSeqMax)
 
   // Sampler chain: only for generation mode
   let samplerPtr: number | null = null
+  const samplers: number[] = []
   if (!config.embeddings) {
-    const scpBuf = Buffer.alloc(Number(S.shim_sizeof_sampler_chain_params()))
-    S.shim_sampler_chain_default_params(scpBuf)
-    samplerPtr = S.shim_sampler_chain_init(scpBuf) as unknown as number
+    const nSamplers = config.nSeqMax
+    for (let s = 0; s < nSamplers; s++) {
+      const scpBuf = Buffer.alloc(Number(S.shim_sizeof_sampler_chain_params()))
+      S.shim_sampler_chain_default_params(scpBuf)
+      const ptr = S.shim_sampler_chain_init(scpBuf) as unknown as number
 
-    const { sampler: sc } = config
-    L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_top_p(sc.topP, 1))
-    L.llama_sampler_chain_add(samplerPtr, S.shim_sampler_init_min_p(sc.minP, 1))
-    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_top_k(sc.topK))
+      const { sampler: sc } = config
+      L.llama_sampler_chain_add(ptr, S.shim_sampler_init_top_p(sc.topP, 1))
+      L.llama_sampler_chain_add(ptr, S.shim_sampler_init_min_p(sc.minP, 1))
+      L.llama_sampler_chain_add(ptr, L.llama_sampler_init_top_k(sc.topK))
 
-    // Penalties after top-k/top-p (llama.h: "apply top-k or top-p sampling first")
-    const rp = sc.repeatPenalty ?? 1.1
-    const fp = sc.frequencyPenalty ?? 0.0
-    const pp = sc.presencePenalty ?? 0.0
-    const pn = sc.penaltyLastN ?? 64
-    if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
-      L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+      const rp = sc.repeatPenalty ?? 1.1
+      const fp = sc.frequencyPenalty ?? 0.0
+      const pp = sc.presencePenalty ?? 0.0
+      const pn = sc.penaltyLastN ?? 64
+      if (rp !== 1.0 || fp !== 0.0 || pp !== 0.0) {
+        L.llama_sampler_chain_add(ptr, L.llama_sampler_init_penalties(pn, rp, fp, pp))
+      }
+
+      L.llama_sampler_chain_add(ptr, L.llama_sampler_init_temp(sc.temp))
+      L.llama_sampler_chain_add(ptr, L.llama_sampler_init_dist(sc.seed))
+      samplers.push(ptr)
     }
-
-    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_temp(sc.temp))
-    L.llama_sampler_chain_add(samplerPtr, L.llama_sampler_init_dist(sc.seed))
+    samplerPtr = samplers[0]!
   }
 
-  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, batchBuf, chatTemplatePtr }
+  return { modelPtr, ctxPtr, vocabPtr, samplerPtr, samplers, batchBuf, chatTemplatePtr, nSeqMax: config.nSeqMax, batchCapacity }
 }
 
 /** Collect model metadata from loaded model. */
@@ -125,11 +142,17 @@ export function runInference(
   // Prefill: process prompt tokens, request logits only for last
   S.shim_batch_clear(batchBuf)
   for (let i = 0; i < tokens.length; i++) {
-    S.shim_batch_add(batchBuf, tokens[i]!, i, 0, i === tokens.length - 1)
+    const ok = S.shim_batch_add(batchBuf, state.batchCapacity, tokens[i]!, i, 0, i === tokens.length - 1)
+    if (!ok) throw new Error(`Batch overflow at token ${i}/${tokens.length} — prompt exceeds batch capacity (${state.batchCapacity}). Reduce prompt length or increase nCtx.`)
   }
   const prefillStart = callbacks.collectMetrics ? performance.now() : 0
   const rc = S.shim_decode(ctxPtr, batchBuf)
-  if (rc !== 0) throw new Error(`llama_decode (prefill) failed: ${rc}`)
+  if (rc !== 0) {
+    const hint = rc === 1
+      ? ' — no KV slot found. Reduce prompt length or increase nCtx.'
+      : rc < 0 ? ' — internal error' : ''
+    throw new Error(`Prefill decode failed (code ${rc})${hint}`)
+  }
   const prefillMs = callbacks.collectMetrics ? performance.now() - prefillStart : 0
 
   // Generation loop
@@ -155,9 +178,10 @@ export function runInference(
 
     // Single-token batch for next decode step
     S.shim_batch_clear(batchBuf)
-    S.shim_batch_add(batchBuf, token, pos, 0, true)
+    const ok = S.shim_batch_add(batchBuf, state.batchCapacity, token, pos, 0, true)
+    if (!ok) throw new Error(`Batch full at generation step — position ${pos} exceeds capacity ${state.batchCapacity}`)
     const rc2 = S.shim_decode(ctxPtr, batchBuf)
-    if (rc2 !== 0) throw new Error(`llama_decode (step ${i}) failed: ${rc2}`)
+    if (rc2 !== 0) throw new Error(`Generation decode failed at step ${i}/${maxTokens} (code ${rc2}, pos=${pos})`)
     pos++
   }
 
@@ -191,7 +215,8 @@ export function runEmbed(
   S.shim_batch_init(tempBatch, tokens.length, 0, 1)
   try {
     for (let j = 0; j < tokens.length; j++) {
-      S.shim_batch_add(tempBatch, tokens[j]!, j, 0, false)
+      const ok = S.shim_batch_add(tempBatch, tokens.length, tokens[j]!, j, 0, false)
+      if (!ok) throw new Error(`Embed batch overflow at token ${j}`)
     }
 
     const hasEncoder = L.llama_model_has_encoder(state.modelPtr) as boolean
@@ -227,9 +252,43 @@ export function runEmbedBatch(
   return texts.map(t => runEmbed(L, S, state, t))
 }
 
+/**
+ * Pre-compute KV cache for a shared system prompt on sequence 0.
+ * Returns the number of prefix tokens processed.
+ * Subsequent inferParallel calls can share this prefix via seq_cp.
+ */
+export function warmupPrefix(
+  L: LibLlama,
+  S: LibShims,
+  state: LlamaState,
+  systemPrompt: string,
+): number {
+  if (state.samplerPtr === null) throw new Error('Cannot warmup an embedding model')
+  const { ctxPtr, vocabPtr, batchBuf } = state
+  const tokens = tokenize(L, vocabPtr, systemPrompt)
+
+  const mem = L.llama_get_memory(ctxPtr)
+  L.llama_memory_clear(mem, false)
+
+  // Prefill system prompt on sequence 0
+  S.shim_batch_clear(batchBuf)
+  for (let i = 0; i < tokens.length; i++) {
+    const ok = S.shim_batch_add(batchBuf, state.batchCapacity, tokens[i]!, i, 0, i === tokens.length - 1)
+    if (!ok) throw new Error(`Warmup batch overflow at token ${i}/${tokens.length} — system prompt too long for batch capacity (${state.batchCapacity}). Reduce system prompt or increase nCtx.`)
+  }
+  const rc = S.shim_decode(ctxPtr, batchBuf)
+  if (rc !== 0) throw new Error(`warmup prefill failed: ${rc}`)
+
+  return tokens.length
+}
+
 /** Free all llama resources (GPU buffers, model, context). */
 export function cleanup(L: LibLlama, S: LibShims, state: LlamaState): void {
-  try { if (state.samplerPtr) L.llama_sampler_free(state.samplerPtr) } catch {}
+  try {
+    for (const ptr of state.samplers) {
+      L.llama_sampler_free(ptr)
+    }
+  } catch {}
   try { if (state.batchBuf.length > 0) S.shim_batch_free(state.batchBuf) } catch {}
   try { if (state.ctxPtr) L.llama_free(state.ctxPtr) } catch {}
   try { if (state.modelPtr) L.llama_model_free(state.modelPtr) } catch {}

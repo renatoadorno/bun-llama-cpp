@@ -44,6 +44,9 @@ export interface LibLlama {
   llama_n_ctx: (ctx: number) => number
   llama_get_memory: (ctx: number) => number
   llama_memory_clear: (mem: number, partial: boolean) => void
+  llama_memory_seq_rm: (mem: number, seqId: number, p0: number, p1: number) => boolean
+  llama_memory_seq_cp: (mem: number, src: number, dst: number, p0: number, p1: number) => void
+  llama_memory_seq_keep: (mem: number, seqId: number) => void
 
   llama_sampler_chain_add: (chain: number, sampler: number) => void
   llama_sampler_init_greedy: () => number
@@ -73,6 +76,8 @@ export interface LibShims {
   shim_ctx_params_set_n_threads: (buf: Buffer, n: number) => void
   shim_ctx_params_set_embeddings: (buf: Buffer, v: boolean) => void
   shim_ctx_params_set_pooling_type: (buf: Buffer, type: number) => void
+  shim_ctx_params_set_n_seq_max: (buf: Buffer, n: number) => void
+  shim_ctx_params_set_n_batch: (buf: Buffer, n: number) => void
   shim_encode: (ctx: number, buf: Buffer) => number
 
   shim_model_load_from_file: (path: Buffer, params: Buffer) => number
@@ -80,7 +85,7 @@ export interface LibShims {
 
   shim_batch_init: (buf: Buffer, nTokens: number, embd: number, nSeqMax: number) => void
   shim_batch_clear: (buf: Buffer) => void
-  shim_batch_add: (buf: Buffer, id: number, pos: number, seqId: number, logits: boolean) => void
+  shim_batch_add: (buf: Buffer, capacity: number, id: number, pos: number, seqId: number, logits: boolean) => boolean
   shim_batch_free: (buf: Buffer) => void
   shim_decode: (ctx: number, buf: Buffer) => number
 
@@ -146,6 +151,9 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     llama_n_ctx:         { args: [FFIType.ptr],              returns: FFIType.u32  },
     llama_get_memory:    { args: [FFIType.ptr],              returns: FFIType.ptr  },
     llama_memory_clear:  { args: [FFIType.ptr, FFIType.bool], returns: FFIType.void },
+    llama_memory_seq_rm:   { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.bool },
+    llama_memory_seq_cp:   { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.void },
+    llama_memory_seq_keep: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
 
     llama_sampler_chain_add:   { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     llama_sampler_init_greedy: { args: [],                         returns: FFIType.ptr  },
@@ -175,6 +183,8 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_ctx_params_set_n_threads:      { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
     shim_ctx_params_set_embeddings:     { args: [FFIType.ptr, FFIType.bool], returns: FFIType.void },
     shim_ctx_params_set_pooling_type:   { args: [FFIType.ptr, FFIType.i32],  returns: FFIType.void },
+    shim_ctx_params_set_n_seq_max:      { args: [FFIType.ptr, FFIType.i32],  returns: FFIType.void },
+    shim_ctx_params_set_n_batch:        { args: [FFIType.ptr, FFIType.i32],  returns: FFIType.void },
     shim_encode:                        { args: [FFIType.ptr, FFIType.ptr],  returns: FFIType.i32  },
 
     shim_model_load_from_file: { args: [FFIType.cstring, FFIType.ptr], returns: FFIType.ptr },
@@ -183,8 +193,8 @@ export function openLibraries(libLlamaPath: string, libShimsPath: string) {
     shim_batch_init:  { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.void },
     shim_batch_clear: { args: [FFIType.ptr],                                          returns: FFIType.void },
     shim_batch_add:   {
-      args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.bool],
-      returns: FFIType.void,
+      args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.bool],
+      returns: FFIType.bool,
     },
     shim_batch_free:  { args: [FFIType.ptr],              returns: FFIType.void },
     shim_decode:      { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32  },

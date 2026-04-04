@@ -55,9 +55,12 @@ void shim_batch_clear(struct llama_batch *batch) {
     batch->n_tokens = 0;
 }
 
-/* id=token_id, pos=position, seq_id=sequence index, logits=compute output */
-void shim_batch_add(struct llama_batch *batch,
+/* id=token_id, pos=position, seq_id=sequence index, logits=compute output
+ * capacity = max tokens allocated by llama_batch_init (prevents overflow)
+ * Returns false if batch is full. */
+bool shim_batch_add(struct llama_batch *batch, int32_t capacity,
                     int32_t id, int32_t pos, int32_t seq_id, bool logits) {
+    if (batch->n_tokens >= capacity) return false;
     int n = batch->n_tokens;
     batch->token   [n]    = id;
     batch->pos     [n]    = pos;
@@ -65,6 +68,7 @@ void shim_batch_add(struct llama_batch *batch,
     batch->seq_id  [n][0] = seq_id;
     batch->logits  [n]    = logits ? 1 : 0;
     batch->n_tokens++;
+    return true;
 }
 
 void shim_batch_free(struct llama_batch *batch) {
@@ -101,6 +105,14 @@ void shim_ctx_params_set_embeddings(struct llama_context_params *p, bool v) {
 
 void shim_ctx_params_set_pooling_type(struct llama_context_params *p, int32_t type) {
     p->pooling_type = (enum llama_pooling_type)type;
+}
+
+void shim_ctx_params_set_n_seq_max(struct llama_context_params *p, int32_t n) {
+    p->n_seq_max = (uint32_t)n;
+}
+
+void shim_ctx_params_set_n_batch(struct llama_context_params *p, int32_t n) {
+    p->n_batch = (uint32_t)n;
 }
 
 /* shim_encode: wraps llama_encode (takes llama_batch by value) */

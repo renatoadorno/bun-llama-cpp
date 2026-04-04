@@ -23,6 +23,7 @@ export interface ModelConfig {
   sampler?: Partial<SamplerConfig>
   embeddings?: boolean
   poolingType?: 0 | 1 | 2 | 3 | 4  // UNSPECIFIED=0 MEAN=1 CLS=2 LAST=3 RANK=4
+  nSeqMax?: number  // max parallel sequences (default: 1)
 }
 
 export interface InferOptions {
@@ -80,6 +81,7 @@ export interface ResolvedConfig {
   sampler: SamplerConfig
   embeddings: boolean
   poolingType: number
+  nSeqMax: number
 }
 
 // ── Worker protocol ─────────────────────────────────────────────────
@@ -87,11 +89,20 @@ export interface ResolvedConfig {
 export type WorkerRequest =
   | { type: 'init'; modelPath: string; config: ResolvedConfig }
   | { type: 'infer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean }
+  | { type: 'startInfer'; id: string; prompt: string; maxTokens: number; abortFlag: Int32Array; collectMetrics: boolean; warmupTokens: number }
   | { type: 'getFimTokens' }
   | { type: 'applyTemplate'; id: string; messages: ChatMessage[]; addAssistant: boolean }
   | { type: 'embed';      id: string; text: string }
   | { type: 'embedBatch'; id: string; texts: string[] }
+  | { type: 'warmup'; id: string; systemPrompt: string }
   | { type: 'shutdown' }
+
+export interface ParallelInferResult {
+  text: string
+  tokenCount: number
+  aborted: boolean
+  metrics?: InferMetrics
+}
 
 export type WorkerResponse =
   | { type: 'ready'; metadata: ModelMetadata }
@@ -102,4 +113,7 @@ export type WorkerResponse =
   | { type: 'templateResult'; id: string; text: string }
   | { type: 'embedResult';      id: string; vector: Float32Array }
   | { type: 'embedBatchResult'; id: string; vectors: Float32Array[] }
+  | { type: 'warmupDone'; id: string; tokenCount: number }
+  | { type: 'seqToken'; id: string; text: string }
+  | { type: 'seqDone'; id: string; text: string; tokenCount: number; aborted: boolean; metrics?: InferMetrics }
   | { type: 'error'; id?: string; message: string }

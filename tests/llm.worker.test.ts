@@ -1,6 +1,6 @@
 import { test, expect, afterAll } from 'bun:test'
 import { join } from 'node:path'
-import { LlamaModel } from './index.ts'
+import { LlamaModel } from '../src/index.ts'
 
 const MODEL_PATH = join(import.meta.dir, '..', 'models', 'qwen3-8b-q4_k_m.gguf')
 

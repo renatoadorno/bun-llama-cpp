@@ -704,11 +704,7 @@ O bun-llama-cpp está em posição única para se tornar a melhor lib JS/TS para
 
 As inovações propostas não existem em nenhuma outra lib JS:
 
-- **Continuous batching** (vLLM-inspired) — nenhuma lib JS faz
-- **KV cache prefix sharing** — node-llama-cpp desperdiça ~87% do KV cache do system prompt
-- **True batch embedding** via multi-seq_id — uma ordem de magnitude mais rápido que sequencial
-- **Pipeline cascading** — RAG end-to-end em uma chamada
-- **Embedding worker pool** — embeddings nunca bloqueiam inferência
+
 
 O roadmap em 5 fases entrega valor incrementalmente: quick wins primeiro para feedback rápido, embeddings para capturar o caso de uso mais demandado, e then as inovações de throughput que criam o fosso competitivo.
 
