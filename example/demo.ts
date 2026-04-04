@@ -7,12 +7,12 @@ const llm = await LlamaModel.load(MODEL_PATH, { preset: 'large' })
 
 // Use model's built-in chat template instead of hardcoding
 const prompt = await llm.applyTemplate([
-  { role: 'user', content: 'explique Bun FFI de forma detalhada.' },
+  { role: 'user', content: 'Explain Bun FFI in 3 sentences. /no_think' },
 ])
 
 const result = await llm.infer(prompt, {
   onToken: (text) => process.stdout.write(text),
-  maxTokens: 800,
+  maxTokens: 500,
 })
 
 process.stdout.write('\n')

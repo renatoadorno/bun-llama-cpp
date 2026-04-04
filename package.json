@@ -17,8 +17,9 @@
     "build:shims": "cc -shared -fPIC -o native/libllama_shims.dylib native/llama_shims.c -I llama.cpp/include -I llama.cpp/ggml/include -undefined dynamic_lookup",
     "start": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/demo.ts",
     "start:embed": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/embed.ts",
+    "start:parallel": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/parallel.ts",
     "dev": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun --hot example/demo.ts",
-    "test": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun test tests/ src/llm.worker.test.ts"
+    "test": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun test tests/"
   },
   "author": "Renato Adorno <renattoadorno@gmail.com>",
   "license": "MIT",
