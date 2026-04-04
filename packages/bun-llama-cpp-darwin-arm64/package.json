@@ -1,6 +1,6 @@
 {
   "name": "@renatoadorno/bun-llama-cpp-darwin-arm64",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "macOS Apple Silicon (arm64) prebuilt binaries for bun-llama-cpp",
   "license": "MIT",
   "author": "Renato Adorno <renattoadorno@gmail.com>",
