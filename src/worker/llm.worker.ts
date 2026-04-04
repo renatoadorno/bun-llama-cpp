@@ -2,6 +2,7 @@ import { dlopen, FFIType } from 'bun:ffi'
 import type { WorkerRequest, WorkerResponse } from '../types.ts'
 import { openLibraries } from './ffi.ts'
 import { initModel, runInference, runEmbed, runEmbedBatch, runInferParallel, warmupPrefix, cleanup, collectMetadata, type LlamaState } from './inference.ts'
+import { BatchEngine } from './batch-engine.ts'
 import { resolveLibPaths } from '../lib-resolver.ts'
 
 declare var self: Worker
@@ -10,6 +11,7 @@ const { libllama: LIBLLAMA, libshims: LIBSHIMS } = resolveLibPaths()
 
 let libs: ReturnType<typeof openLibraries> | null = null
 let state: LlamaState | null = null
+let batchEngine: BatchEngine | null = null
 
 // Redirect fd 2 (stderr) to /dev/null via libc dup/dup2.
 // This silences ggml_metal and create_tensor logs that bypass llama_log_set.
@@ -52,6 +54,23 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         state = initModel(libs.L, libs.S, msg.modelPath, msg.config)
         restoreStderr()
         const metadata = collectMetadata(libs.L, state.modelPtr)
+
+        // Initialize batch engine for continuous batching (nSeqMax > 1)
+        if (state.nSeqMax > 1) {
+          batchEngine = new BatchEngine(libs.L, libs.S, state, {
+            onToken: (id, text) => post({ type: 'seqToken', id, text }),
+            onDone: (id, result) => post({
+              type: 'seqDone',
+              id,
+              text: result.text,
+              tokenCount: result.tokenCount,
+              aborted: result.aborted,
+              metrics: result.metrics,
+            }),
+            onError: (id, message) => post({ type: 'error', id, message }),
+          })
+        }
+
         post({ type: 'ready', metadata })
       } catch (e) {
         restoreStderr()
@@ -212,6 +231,24 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       break
     }
 
+    case 'startInfer': {
+      if (!batchEngine) {
+        post({ type: 'error', id: msg.id, message: 'Batch engine not available (requires nSeqMax > 1)' })
+        break
+      }
+      muteStderr()
+      batchEngine.enqueue({
+        id: msg.id,
+        prompt: msg.prompt,
+        maxTokens: msg.maxTokens,
+        priority: msg.priority,
+        abortFlag: msg.abortFlag,
+        collectMetrics: msg.collectMetrics,
+        warmupTokens: msg.warmupTokens,
+      })
+      break
+    }
+
     case 'inferParallel': {
       if (!libs || !state) {
         post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
@@ -221,8 +258,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         muteStderr()
         const results = runInferParallel(libs.L, libs.S, state, msg.requests, {
           onToken: (seqIndex, text) => post({ type: 'parallelToken', id: msg.id, seqIndex, text }),
-          isAborted: (seqIndex) => Atomics.load(msg.requests[seqIndex]!.abortFlag, 0) === 1,
-        })
+        }, msg.warmupTokens)
         restoreStderr()
         post({ type: 'inferParallelResult', id: msg.id, results })
       } catch (e) {

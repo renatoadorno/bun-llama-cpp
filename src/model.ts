@@ -31,9 +31,37 @@ export class LlamaModel {
   private _embeddingMode = false
   private _nSeqMax = 1
   private _warmupTokens = 0
+  private _activeInfers = 0
+
+  // Persistent message router: dispatches by request ID
+  private _handlers = new Map<string, (msg: WorkerResponse) => void>()
+  // Fallback handler for messages without an ID (e.g. 'fimTokens')
+  private _defaultHandler: ((msg: WorkerResponse) => void) | null = null
 
   private constructor(worker: Worker) {
     this.worker = worker
+    this._setupRouter()
+  }
+
+  private _setupRouter(): void {
+    this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const msg = event.data
+      // Route by message ID if present
+      if ('id' in msg && msg.id) {
+        const handler = this._handlers.get(msg.id)
+        if (handler) handler(msg)
+      } else if (this._defaultHandler) {
+        this._defaultHandler(msg)
+      }
+    }
+  }
+
+  private _registerHandler(id: string, handler: (msg: WorkerResponse) => void): void {
+    this._handlers.set(id, handler)
+  }
+
+  private _unregisterHandler(id: string): void {
+    this._handlers.delete(id)
   }
 
   /** Load a GGUF model and return an initialized LlamaModel instance. */
@@ -45,10 +73,11 @@ export class LlamaModel {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Model load timeout (120s)')), 120_000)
 
-      worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
+      // Use a temporary default handler for the init response (no id)
+      instance._defaultHandler = (msg: WorkerResponse) => {
         if (msg.type === 'ready') {
           clearTimeout(timer)
+          instance._defaultHandler = null
           instance._metadata = msg.metadata
           instance._isReady = true
           instance._embeddingMode = resolved.embeddings
@@ -56,6 +85,7 @@ export class LlamaModel {
           resolve()
         } else if (msg.type === 'error') {
           clearTimeout(timer)
+          instance._defaultHandler = null
           reject(new Error(msg.message))
         }
       }
@@ -73,7 +103,84 @@ export class LlamaModel {
     if (!this._isReady) throw new Error('Model is not ready')
     if (this._embeddingMode) throw new Error('Cannot call infer() on an embedding model — use embed() or embedMany()')
 
+    // Continuous batching: bypass serial queue, join batch engine
+    if (this._nSeqMax > 1) {
+      return this.doConcurrentInfer(prompt, options)
+    }
+
     return this.queue.enqueue(() => this.doInfer(prompt, options))
+  }
+
+  /** Concurrent infer via batch engine — multiple calls run in parallel. */
+  private doConcurrentInfer(prompt: string, options: InferOptions): Promise<InferResult> {
+    return new Promise<InferResult>((resolve, reject) => {
+      this._activeInfers++
+      const id = crypto.randomUUID()
+      const chunks: string[] = []
+
+      const abortBuf = new SharedArrayBuffer(4)
+      const abortFlag = new Int32Array(abortBuf)
+
+      const onAbort = () => Atomics.store(abortFlag, 0, 1)
+
+      if (options.signal?.aborted) {
+        this._activeInfers--
+        resolve({ text: '', tokenCount: 0, aborted: true })
+        return
+      }
+
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+
+      const timer = setTimeout(() => {
+        Atomics.store(abortFlag, 0, 1)
+        cleanup()
+        reject(new Error('infer timeout (300s)'))
+      }, 300_000)
+
+      const cleanup = () => {
+        clearTimeout(timer)
+        options.signal?.removeEventListener('abort', onAbort)
+        this._unregisterHandler(id)
+        this._activeInfers--
+      }
+
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        switch (msg.type) {
+          case 'seqToken': {
+            chunks.push(msg.text)
+            options.onToken(msg.text)
+            break
+          }
+          case 'seqDone': {
+            cleanup()
+            resolve({
+              text: msg.text,
+              tokenCount: msg.tokenCount,
+              aborted: msg.aborted,
+              metrics: msg.metrics,
+            })
+            break
+          }
+          case 'error': {
+            cleanup()
+            reject(new Error(msg.message))
+            break
+          }
+        }
+      })
+
+      const inferMsg: WorkerRequest = {
+        type: 'startInfer',
+        id,
+        prompt,
+        maxTokens: options.maxTokens ?? 512,
+        priority: 0,
+        abortFlag,
+        collectMetrics: options.metrics ?? false,
+        warmupTokens: this._warmupTokens,
+      }
+      this.worker.postMessage(inferMsg)
+    })
   }
 
   private doInfer(prompt: string, options: InferOptions): Promise<InferResult> {
@@ -82,8 +189,6 @@ export class LlamaModel {
       const id = crypto.randomUUID()
       const chunks: string[] = []
 
-      // SharedArrayBuffer for cross-thread abort signaling
-      // (worker event loop is blocked during synchronous FFI calls)
       const abortBuf = new SharedArrayBuffer(4)
       const abortFlag = new Int32Array(abortBuf)
 
@@ -99,19 +204,16 @@ export class LlamaModel {
 
       options.signal?.addEventListener('abort', onAbort, { once: true })
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-
+      this._registerHandler(id, (msg: WorkerResponse) => {
         switch (msg.type) {
           case 'token': {
-            if (msg.id !== id) break
             chunks.push(msg.text)
             options.onToken(msg.text)
             break
           }
           case 'done': {
-            if (msg.id !== id) break
             options.signal?.removeEventListener('abort', onAbort)
+            this._unregisterHandler(id)
             this._isBusy = false
             resolve({
               text: chunks.join(''),
@@ -122,8 +224,8 @@ export class LlamaModel {
             break
           }
           case 'aborted': {
-            if (msg.id !== id) break
             options.signal?.removeEventListener('abort', onAbort)
+            this._unregisterHandler(id)
             this._isBusy = false
             resolve({
               text: chunks.join(''),
@@ -133,14 +235,14 @@ export class LlamaModel {
             break
           }
           case 'error': {
-            if (msg.id && msg.id !== id) break
             options.signal?.removeEventListener('abort', onAbort)
+            this._unregisterHandler(id)
             this._isBusy = false
             reject(new Error(msg.message))
             break
           }
         }
-      }
+      })
 
       const inferMsg: WorkerRequest = {
         type: 'infer',
@@ -170,15 +272,19 @@ export class LlamaModel {
 
   private doGetFimTokens(): Promise<FimTokens> {
     return new Promise<FimTokens>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('getFimTokens timeout (5s)')), 5_000)
+      const timer = setTimeout(() => {
+        this._defaultHandler = null
+        reject(new Error('getFimTokens timeout (5s)'))
+      }, 5_000)
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
+      this._defaultHandler = (msg: WorkerResponse) => {
         if (msg.type === 'fimTokens') {
           clearTimeout(timer)
+          this._defaultHandler = null
           resolve(msg.data)
         } else if (msg.type === 'error') {
           clearTimeout(timer)
+          this._defaultHandler = null
           reject(new Error(msg.message))
         }
       }
@@ -210,18 +316,22 @@ export class LlamaModel {
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const id = crypto.randomUUID()
-      const timer = setTimeout(() => reject(new Error('applyTemplate timeout (5s)')), 5_000)
+      const timer = setTimeout(() => {
+        this._unregisterHandler(id)
+        reject(new Error('applyTemplate timeout (5s)'))
+      }, 5_000)
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-        if (msg.type === 'templateResult' && msg.id === id) {
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        if (msg.type === 'templateResult') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           resolve(msg.text)
-        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+        } else if (msg.type === 'error') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           reject(new Error(msg.message))
         }
-      }
+      })
 
       const req: WorkerRequest = {
         type: 'applyTemplate',
@@ -244,18 +354,22 @@ export class LlamaModel {
   private doEmbed(text: string): Promise<Float32Array> {
     return new Promise<Float32Array>((resolve, reject) => {
       const id = crypto.randomUUID()
-      const timer = setTimeout(() => reject(new Error('embed timeout (60s)')), 60_000)
+      const timer = setTimeout(() => {
+        this._unregisterHandler(id)
+        reject(new Error('embed timeout (60s)'))
+      }, 60_000)
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-        if (msg.type === 'embedResult' && msg.id === id) {
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        if (msg.type === 'embedResult') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           resolve(msg.vector)
-        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+        } else if (msg.type === 'error') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           reject(new Error(msg.message))
         }
-      }
+      })
 
       const req: WorkerRequest = { type: 'embed', id, text }
       this.worker.postMessage(req)
@@ -274,18 +388,22 @@ export class LlamaModel {
   private doEmbedBatch(texts: string[]): Promise<Float32Array[]> {
     return new Promise<Float32Array[]>((resolve, reject) => {
       const id = crypto.randomUUID()
-      const timer = setTimeout(() => reject(new Error('embedMany timeout (60s)')), 60_000)
+      const timer = setTimeout(() => {
+        this._unregisterHandler(id)
+        reject(new Error('embedMany timeout (60s)'))
+      }, 60_000)
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-        if (msg.type === 'embedBatchResult' && msg.id === id) {
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        if (msg.type === 'embedBatchResult') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           resolve(msg.vectors)
-        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+        } else if (msg.type === 'error') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           reject(new Error(msg.message))
         }
-      }
+      })
 
       const req: WorkerRequest = { type: 'embedBatch', id, texts }
       this.worker.postMessage(req)
@@ -309,19 +427,23 @@ export class LlamaModel {
   private doWarmup(systemPrompt: string): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       const id = crypto.randomUUID()
-      const timer = setTimeout(() => reject(new Error('warmup timeout (60s)')), 60_000)
+      const timer = setTimeout(() => {
+        this._unregisterHandler(id)
+        reject(new Error('warmup timeout (60s)'))
+      }, 60_000)
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-        if (msg.type === 'warmupDone' && msg.id === id) {
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        if (msg.type === 'warmupDone') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           this._warmupTokens = msg.tokenCount
           resolve(msg.tokenCount)
-        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+        } else if (msg.type === 'error') {
           clearTimeout(timer)
+          this._unregisterHandler(id)
           reject(new Error(msg.message))
         }
-      }
+      })
 
       const req: WorkerRequest = { type: 'warmup', id, systemPrompt }
       this.worker.postMessage(req)
@@ -353,6 +475,12 @@ export class LlamaModel {
     return new Promise<ParallelInferResult[]>((resolve, reject) => {
       this._isBusy = true
       const id = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        cleanupAborts.forEach(fn => fn())
+        this._unregisterHandler(id)
+        this._isBusy = false
+        reject(new Error('inferParallel timeout (300s)'))
+      }, 300_000)
 
       // Create per-request abort buffers
       const abortBuffers = requests.map(() => new SharedArrayBuffer(4))
@@ -373,22 +501,24 @@ export class LlamaModel {
         }
       }
 
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const msg = event.data
-
-        if (msg.type === 'parallelToken' && msg.id === id) {
+      this._registerHandler(id, (msg: WorkerResponse) => {
+        if (msg.type === 'parallelToken') {
           const req = requests[msg.seqIndex]
           if (req) req.onToken(msg.text)
-        } else if (msg.type === 'inferParallelResult' && msg.id === id) {
+        } else if (msg.type === 'inferParallelResult') {
+          clearTimeout(timer)
           cleanupAborts.forEach(fn => fn())
+          this._unregisterHandler(id)
           this._isBusy = false
           resolve(msg.results)
-        } else if (msg.type === 'error' && (!msg.id || msg.id === id)) {
+        } else if (msg.type === 'error') {
+          clearTimeout(timer)
           cleanupAborts.forEach(fn => fn())
+          this._unregisterHandler(id)
           this._isBusy = false
           reject(new Error(msg.message))
         }
-      }
+      })
 
       const workerRequests = requests.map((req, i) => ({
         prompt: req.prompt,
@@ -402,6 +532,7 @@ export class LlamaModel {
         type: 'inferParallel',
         id,
         requests: workerRequests,
+        warmupTokens: this._warmupTokens,
       }
       this.worker.postMessage(inferMsg)
     })
