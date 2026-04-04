@@ -92,18 +92,22 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         post({ type: 'error', message: 'Worker not initialized' })
         break
       }
-      const vocab = state.vocabPtr
-      post({
-        type: 'fimTokens',
-        data: {
-          pre: libs.L.llama_vocab_fim_pre(vocab),
-          suf: libs.L.llama_vocab_fim_suf(vocab),
-          mid: libs.L.llama_vocab_fim_mid(vocab),
-          pad: libs.L.llama_vocab_fim_pad(vocab),
-          rep: libs.L.llama_vocab_fim_rep(vocab),
-          sep: libs.L.llama_vocab_fim_sep(vocab),
-        },
-      })
+      try {
+        const vocab = state.vocabPtr
+        post({
+          type: 'fimTokens',
+          data: {
+            pre: libs.L.llama_vocab_fim_pre(vocab),
+            suf: libs.L.llama_vocab_fim_suf(vocab),
+            mid: libs.L.llama_vocab_fim_mid(vocab),
+            pad: libs.L.llama_vocab_fim_pad(vocab),
+            rep: libs.L.llama_vocab_fim_rep(vocab),
+            sep: libs.L.llama_vocab_fim_sep(vocab),
+          },
+        })
+      } catch (e) {
+        post({ type: 'error', message: `getFimTokens failed: ${e}` })
+      }
       break
     }
 
@@ -165,6 +169,10 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     case 'infer': {
       if (!libs || !state) {
         post({ type: 'error', id: msg.id, message: 'Worker not initialized' })
+        break
+      }
+      if (!msg.prompt || msg.maxTokens <= 0) {
+        post({ type: 'error', id: msg.id, message: 'Invalid infer params: prompt must be non-empty, maxTokens must be positive' })
         break
       }
       try {
@@ -230,6 +238,10 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     case 'startInfer': {
       if (!batchEngine) {
         post({ type: 'error', id: msg.id, message: 'Batch engine not available (requires nSeqMax > 1)' })
+        break
+      }
+      if (!msg.prompt || msg.maxTokens <= 0) {
+        post({ type: 'error', id: msg.id, message: `Invalid startInfer params: prompt=${!!msg.prompt}, maxTokens=${msg.maxTokens}` })
         break
       }
       batchEngine.enqueue({
