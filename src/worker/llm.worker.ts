@@ -24,9 +24,15 @@ const libc = dlopen('libSystem.B.dylib', {
 
 let savedStderrFd = -1
 
-function muteStderr() {
+function muteStderr(): void {
   savedStderrFd = libc.symbols.dup(2) as number
+  if (savedStderrFd < 0) return
   const devnull = libc.symbols.open(Buffer.from('/dev/null\0'), 1) as number
+  if (devnull < 0) {
+    libc.symbols.close(savedStderrFd)
+    savedStderrFd = -1
+    return
+  }
   libc.symbols.dup2(devnull, 2)
   libc.symbols.close(devnull)
 }
@@ -52,7 +58,6 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         muteStderr()
         libs = openLibraries(LIBLLAMA, LIBSHIMS)
         state = initModel(libs.L, libs.S, msg.modelPath, msg.config)
-        restoreStderr()
         const metadata = collectMetadata(libs.L, state.modelPtr)
 
         // Initialize batch engine for continuous batching (nSeqMax > 1)
@@ -70,8 +75,11 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
             onError: (id, message) => post({ type: 'error', id, message }),
           })
         }
-
+        restoreStderr()
         post({ type: 'ready', metadata })
+        // Keep stderr muted for all subsequent operations — prevents
+        // llama.cpp Metal/ggml logs from leaking to user's terminal.
+        muteStderr()
       } catch (e) {
         restoreStderr()
         post({ type: 'error', message: String(e) })
@@ -161,20 +169,17 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       }
       try {
         const abortFlag = msg.abortFlag
-        muteStderr()
         const result = runInference(libs.L, libs.S, state, msg.prompt, msg.maxTokens, {
           onToken: (text) => post({ type: 'token', id: msg.id, text }),
           isAborted: () => Atomics.load(abortFlag, 0) === 1,
           collectMetrics: msg.collectMetrics,
         })
-        restoreStderr()
         if (result.aborted) {
           post({ type: 'aborted', id: msg.id })
         } else {
           post({ type: 'done', id: msg.id, tokenCount: result.tokenCount, metrics: result.metrics })
         }
       } catch (e) {
-        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break
@@ -186,12 +191,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
-        muteStderr()
         const vector = runEmbed(libs.L, libs.S, state, msg.text)
-        restoreStderr()
         post({ type: 'embedResult', id: msg.id, vector })
       } catch (e) {
-        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break
@@ -203,12 +205,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
-        muteStderr()
         const vectors = runEmbedBatch(libs.L, libs.S, state, msg.texts)
-        restoreStderr()
         post({ type: 'embedBatchResult', id: msg.id, vectors })
       } catch (e) {
-        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break
@@ -220,12 +219,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         break
       }
       try {
-        muteStderr()
         const tokenCount = warmupPrefix(libs.L, libs.S, state, msg.systemPrompt)
-        restoreStderr()
         post({ type: 'warmupDone', id: msg.id, tokenCount })
       } catch (e) {
-        restoreStderr()
         post({ type: 'error', id: msg.id, message: String(e) })
       }
       break
@@ -249,7 +245,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     }
 
     case 'shutdown': {
-      muteStderr()
+      restoreStderr()
       if (batchEngine) batchEngine.shutdown()
       if (libs && state) {
         cleanup(libs.L, libs.S, state)
