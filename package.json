@@ -18,6 +18,7 @@
     "start": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/demo.ts",
     "start:embed": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/embed.ts",
     "start:parallel": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/parallel.ts",
+    "start:rag": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun example/rag.ts",
     "dev": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun --hot example/demo.ts",
     "test": "DYLD_LIBRARY_PATH=llama.cpp/build/bin bun test tests/"
   },
