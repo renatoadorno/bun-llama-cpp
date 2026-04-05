@@ -269,13 +269,331 @@ Multiple `infer()` calls are safe — they are serialized automatically via an i
 ```typescript
 const llm = await LlamaModel.load('./model.gguf', { preset: 'medium' })
 
-// These run sequentially, not in parallel (llama.cpp is single-context)
+// By default (nSeqMax = 1), these are serialized via an internal queue.
+// With nSeqMax > 1, they run truly concurrently — see Section 12.
 const [a, b, c] = await Promise.all([
   llm.infer('Question 1', { onToken: () => {}, maxTokens: 50 }),
   llm.infer('Question 2', { onToken: () => {}, maxTokens: 50 }),
   llm.infer('Question 3', { onToken: () => {}, maxTokens: 50 }),
 ])
 ```
+
+---
+
+## 11. Embeddings
+
+Load a model in embedding mode to convert text into dense vectors for semantic search and similarity tasks.
+
+```typescript
+import { LlamaModel } from '@renatoadorno/bun-llama-cpp'
+
+const embedder = await LlamaModel.load('./models/nomic-embed-text-v1.5.Q4_K_M.gguf', {
+  preset: 'small',
+  embeddings: true,
+  poolingType: 1, // MEAN — required for nomic-embed-text
+})
+
+// Single embedding
+const vector = await embedder.embed('search_query: What is the capital of France?')
+console.log(vector) // Float32Array[768]
+
+// Batch embeddings
+const vectors = await embedder.embedMany([
+  'search_document: Paris is the capital of France',
+  'search_document: London is the capital of the UK',
+])
+// → Float32Array[]
+
+await embedder.dispose()
+```
+
+**Embedding mode is mutually exclusive with generation.** A model loaded with `embeddings: true` cannot call `infer()`, and a generative model cannot call `embed()`. Use `assertCapability()` to validate early:
+
+```typescript
+import { assertCapability, CapabilityMismatchError } from '@renatoadorno/bun-llama-cpp'
+
+try {
+  assertCapability(embedder, 'embed')   // passes silently ✅
+  assertCapability(llm, 'generate')     // passes silently ✅
+  assertCapability(llm, 'embed')        // throws CapabilityMismatchError ❌
+} catch (e) {
+  if (e instanceof CapabilityMismatchError) {
+    console.error(e.message)
+    // "Model must be loaded with embeddings: true to embed text. Re-load with { embeddings: true, poolingType: 1 }."
+  }
+}
+```
+
+### Recommended embedding models
+
+| Model | Dimensions | Notes |
+|-------|-----------|-------|
+| `nomic-embed-text-v1.5.Q4_K_M.gguf` | 768 | Best for retrieval; use `poolingType: 1` (MEAN) |
+
+### Cosine similarity (user-side utility)
+
+The library returns raw `Float32Array` vectors — similarity computation is your responsibility:
+
+```typescript
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot   += a[i]! * b[i]!
+    normA += a[i]! * a[i]!
+    normB += b[i]! * b[i]!
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+}
+
+const [queryVec, ...docVecs] = await embedder.embedMany([query, ...documents])
+const scores = documents.map((doc, i) => ({
+  doc,
+  score: cosineSimilarity(queryVec!, docVecs[i]!),
+}))
+scores.sort((a, b) => b.score - a.score)
+```
+
+---
+
+## 12. Parallel Inference
+
+Load with `nSeqMax > 1` to run multiple sequences concurrently on the same GPU batch. All sequences advance together in each decode step — throughput scales with batch size.
+
+```typescript
+const llm = await LlamaModel.load('./models/qwen3-8b-q4_k_m.gguf', {
+  preset: 'large',
+  nSeqMax: 4, // up to 4 parallel sequences
+})
+```
+
+### Method 1: `inferParallel()` — synchronized batch
+
+All sequences start together. Best for homogeneous batch workloads:
+
+```typescript
+const results = await llm.inferParallel([
+  {
+    prompt: 'Translate to French: Hello world /no_think',
+    onToken: (t) => process.stdout.write(t),
+    maxTokens: 50,
+  },
+  {
+    prompt: 'Translate to Spanish: Hello world /no_think',
+    onToken: (t) => process.stdout.write(t),
+    maxTokens: 50,
+  },
+])
+
+for (const result of results) {
+  console.log(`\n${result.text} (${result.tokenCount} tokens)`)
+}
+```
+
+### Method 2: `Promise.all` with `infer()` — concurrent queue
+
+When `nSeqMax > 1`, concurrent `infer()` calls are dispatched to the batch engine and run in parallel (not serialized). Best for heterogeneous workloads where requests arrive at different times:
+
+```typescript
+const [a, b] = await Promise.all([
+  llm.infer('Question A /no_think', { onToken: () => {}, maxTokens: 30 }),
+  llm.infer('Question B /no_think', { onToken: () => {}, maxTokens: 30 }),
+])
+```
+
+### Method 3: Per-sequence abort
+
+Each sequence in `inferParallel()` accepts its own `AbortController`:
+
+```typescript
+const controller = new AbortController()
+
+const results = await llm.inferParallel([
+  {
+    prompt: 'Write a very long essay /no_think',
+    onToken: (t) => {
+      process.stdout.write(t)
+      if (someCondition) controller.abort() // abort this sequence only
+    },
+    maxTokens: 500,
+    signal: controller.signal,
+  },
+  {
+    prompt: 'Short answer /no_think',
+    onToken: (t) => process.stdout.write(t),
+    maxTokens: 20,
+    // no signal — runs to completion regardless
+  },
+])
+
+console.log(`Seq 0 aborted: ${results[0]!.aborted}`)
+```
+
+### Method 4: Warmup + prefix sharing (~8× speedup)
+
+Pre-compute the KV cache for a shared system prompt so all parallel sequences skip the prefill step:
+
+```typescript
+// Build the system prompt prefix using the model's chat template
+const systemPrompt = await llm.applyTemplate([
+  { role: 'system', content: 'You are a math tutor. Answer concisely. /no_think' },
+], { addAssistant: false })
+
+// Pre-compute KV cache for the shared prefix (runs once)
+const warmupTokens = await llm.warmup(systemPrompt)
+console.log(`Cached ${warmupTokens} tokens`)
+
+// All sequences reuse the cached prefix — only user turns need prefill
+const results = await llm.inferParallel([
+  {
+    prompt: systemPrompt + '\nUser: What is 2 + 2?\nAssistant:',
+    onToken: (t) => process.stdout.write(t),
+    maxTokens: 30,
+    metrics: true,
+  },
+  {
+    prompt: systemPrompt + '\nUser: What is 10 × 10?\nAssistant:',
+    onToken: (t) => process.stdout.write(t),
+    maxTokens: 30,
+    metrics: true,
+  },
+])
+
+for (const result of results) {
+  if (result.metrics) {
+    console.log(`${result.metrics.generatedTokens} tokens at ${result.metrics.tokensPerSec.toFixed(1)} tok/s`)
+  }
+}
+
+await llm.dispose()
+```
+
+> **Note:** Call `warmup()` once after load, before the first `inferParallel()`. `nSeqMax` must be `> 1` for `warmup()` to work.
+
+---
+
+## 13. Multi-Model Orchestration
+
+Use `ModelRegistry` to manage multiple models by name, and `ModelPipeline` to orchestrate embed → rerank → generate workflows.
+
+### ModelRegistry — load and manage models by name
+
+```typescript
+import { ModelRegistry, ModelNotFoundError } from '@renatoadorno/bun-llama-cpp'
+
+const registry = new ModelRegistry()
+
+await registry.load('embed', './models/nomic-embed-text-v1.5.Q4_K_M.gguf', {
+  preset: 'small',
+  embeddings: true,
+  poolingType: 1,
+})
+await registry.load('gen', './models/qwen3-8b-q4_k_m.gguf', { preset: 'medium' })
+
+// Check status
+console.log(registry.status('embed'))        // 'ready'
+console.log(registry.status('not-loaded'))   // 'unknown'
+
+// Get a ready model
+const embedder = registry.get('embed')
+
+// Unload a specific model
+await registry.unload('embed')
+
+// Dispose everything (in reverse load order)
+await registry.disposeAll()
+```
+
+**`load()` is idempotent and deduplicates concurrent calls** — calling it twice for the same name (even concurrently) creates only one Worker.
+
+**Error recovery:**
+
+```typescript
+try {
+  await registry.load('bad', '/nonexistent/model.gguf')
+} catch (e) {
+  console.log(registry.status('bad')) // 'error'
+}
+
+// get() on a failed model throws with context
+try {
+  registry.get('bad')
+} catch (e) {
+  if (e instanceof ModelNotFoundError) {
+    console.log(e.code)    // 'MODEL_NOT_FOUND'
+    console.log(e.message) // "Model 'bad' failed to load: ... Call registry.load('bad', path, config) again to retry."
+  }
+}
+
+// Retry by calling load() again with the correct path
+await registry.load('bad', './models/qwen3-8b-q4_k_m.gguf', { preset: 'small' })
+```
+
+### ModelPipeline — embed → rerank → generate
+
+`ModelPipeline` orchestrates multi-step RAG. The caller retrieves candidates from their own vector store and passes them in:
+
+```typescript
+import { ModelPipeline } from '@renatoadorno/bun-llama-cpp'
+
+const pipeline = new ModelPipeline(
+  registry.get('embed'), // must have embeddings: true
+  registry.get('gen'),   // must be a generative model
+)
+
+// 1. Embed a query (returns Float32Array)
+const queryVec = await pipeline.embed('search_query: What is the tallest mountain?')
+
+// 2. Rerank candidates from your vector store
+const candidates = [
+  'search_document: Mount Everest stands at 8,848 meters above sea level.',
+  'search_document: The Amazon River is the largest by discharge volume.',
+  'search_document: K2 is the second-tallest mountain at 8,611 meters.',
+]
+const ranked = await pipeline.rerank(
+  'search_query: What is the tallest mountain?',
+  candidates,
+)
+// → [{ doc: 'Mount Everest...', score: 0.94 }, { doc: 'K2...', score: 0.87 }, ...]
+
+// 3. Generate answer from top context
+const context = ranked.slice(0, 2).map(r => r.doc).join('\n')
+const result = await pipeline.generate(context, 'What is the tallest mountain?', {
+  maxTokens: 80,
+  onToken: (t) => process.stdout.write(t),
+})
+// → { text: 'Mount Everest, at 8,848 meters...', tokenCount: 22, aborted: false }
+
+process.stdout.write('\n')
+```
+
+**Constructor validates model types immediately** — passing a generative model as the embed argument throws `CapabilityMismatchError` at construction time, not at call time:
+
+```typescript
+new ModelPipeline(genModel, genModel)    // ❌ throws CapabilityMismatchError
+new ModelPipeline(embedModel, genModel)  // ✅
+```
+
+### Typed errors
+
+All `bun-llama-cpp` errors extend `LlamaCppError` and carry a `code` string for programmatic handling:
+
+```typescript
+import { LlamaCppError, CapabilityMismatchError, ModelNotFoundError } from '@renatoadorno/bun-llama-cpp'
+
+try {
+  registry.get('not-loaded')
+} catch (e) {
+  if (e instanceof LlamaCppError) {
+    console.log(e.code)    // 'MODEL_NOT_FOUND' | 'CAPABILITY_MISMATCH'
+    console.log(e.message) // actionable message
+  }
+}
+```
+
+| Code | Thrown by | Cause |
+|------|-----------|-------|
+| `MODEL_NOT_FOUND` | `registry.get()` | Model not loaded, still loading, or failed |
+| `CAPABILITY_MISMATCH` | `assertCapability()`, `ModelPipeline` constructor | Wrong model type for the operation |
 
 ---
 
