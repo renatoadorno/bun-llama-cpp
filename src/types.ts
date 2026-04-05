@@ -117,3 +117,37 @@ export type WorkerResponse =
   | { type: 'seqToken'; id: string; text: string }
   | { type: 'seqDone'; id: string; text: string; tokenCount: number; aborted: boolean; metrics?: InferMetrics }
   | { type: 'error'; id?: string; message: string }
+
+// ── Capability types ─────────────────────────────────────────────────
+
+export interface ModelCapabilities {
+  /** True when the model was loaded with embeddings: true */
+  isEmbedder: boolean
+  /** True when the model was loaded with nSeqMax > 1 */
+  supportsParallel: boolean
+  /** Max parallel sequences (1 when not in parallel mode) */
+  maxParallelSequences: number
+}
+
+// ── Registry types ───────────────────────────────────────────────────
+
+export type ModelStatus = 'loading' | 'ready' | 'error' | 'unknown'
+
+// ── Pipeline types ───────────────────────────────────────────────────
+
+export interface RerankResult {
+  doc: string
+  score: number
+}
+
+export interface PipelineGenerateOptions {
+  onToken?: (text: string) => void
+  maxTokens?: number
+  signal?: AbortSignal
+}
+
+export interface PipelineGenerateResult {
+  text: string
+  tokenCount: number
+  aborted: boolean
+}
