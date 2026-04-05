@@ -108,7 +108,7 @@ describe('ModelPipeline.rerank()', () => {
     expect(results).toHaveLength(2)
     expect(results[0]!.score).toBeGreaterThanOrEqual(results[1]!.score)
     // The ML doc should rank higher than the pasta doc
-    expect(results[0]!.doc).toBe(docs[1])
+    expect(results[0]!.doc).toBe(docs[1]!)
   }, 60_000)
 
   test('all scores are within cosine similarity range [-1, 1]', async () => {
