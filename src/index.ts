@@ -13,3 +13,13 @@ export type {
   ChatMessage,
   ParallelInferResult,
 } from './types.ts'
+export { ModelRegistry } from './registry.ts'
+export { LlamaCppError, CapabilityMismatchError, ModelNotFoundError, assertCapability } from './errors.ts'
+export type { LlamaCppErrorCode } from './errors.ts'
+export type {
+  ModelCapabilities,
+  ModelStatus,
+  RerankResult,
+  PipelineGenerateOptions,
+  PipelineGenerateResult,
+} from './types.ts'
