@@ -13,6 +13,9 @@ High-performance FFI bindings from [Bun](https://bun.sh) to [llama.cpp](https://
 - **Abort support** — `AbortSignal` with `SharedArrayBuffer` cross-thread signaling
 - **Serial queue** — Thread-safe concurrent `infer()` calls via Promise-based queue
 - **Graceful shutdown** — Proper GPU/Metal buffer cleanup on `dispose()`
+- **Embeddings** — `embed()` / `embedMany()` returning native `Float32Array`, encoder model support
+- **Parallel sequences** — `inferParallel()` with continuous batching and KV prefix sharing
+- **Multi-model registry** — `ModelRegistry` + `ModelPipeline` for embed → generate pipelines
 
 ## Install
 
@@ -107,6 +110,86 @@ const prompt = await llm.applyTemplate([
 ])
 ```
 
+### Embeddings
+
+Load with `embeddings: true` to use a model as an encoder:
+
+```ts
+const embedder = await LlamaModel.load('./nomic-embed-text-v1.5.Q4_K_M.gguf', {
+  preset: 'small',
+  embeddings: true,
+  poolingType: 1, // MEAN — required for nomic-embed-text
+})
+
+const vector = await embedder.embed('search_query: capital of France')
+// → Float32Array[768]
+
+const vectors = await embedder.embedMany(['doc 1', 'doc 2', 'doc 3'])
+// → Float32Array[]
+
+await embedder.dispose()
+```
+
+Embedding mode is mutually exclusive with generation — an embedding model cannot call `infer()`.
+
+### Parallel Inference
+
+Load with `nSeqMax > 1` to run multiple sequences concurrently on the same GPU batch:
+
+```ts
+const llm = await LlamaModel.load('./model.gguf', { preset: 'large', nSeqMax: 4 })
+
+// Batch: all sequences run in lock-step on the GPU
+const results = await llm.inferParallel([
+  { prompt: 'Translate to French: Hello', onToken: (t) => process.stdout.write(t) },
+  { prompt: 'Translate to Spanish: Hello', onToken: (t) => process.stdout.write(t) },
+])
+
+// Concurrent queue: requests are serialized but overlap during execution
+await Promise.all([
+  llm.infer('Prompt A', { onToken: (t) => process.stdout.write(t) }),
+  llm.infer('Prompt B', { onToken: (t) => process.stdout.write(t) }),
+])
+
+await llm.dispose()
+```
+
+Use `llm.warmup(systemPrompt)` to pre-compute the KV cache for a shared system prompt before calling `inferParallel()` — this gives ~8× speedup when all sequences share the same prefix.
+
+### Multi-Model Orchestration
+
+`ModelRegistry` manages multiple models by name. `ModelPipeline` orchestrates embed → rerank → generate without owning a vector store:
+
+```ts
+import { ModelRegistry, ModelPipeline, assertCapability } from 'bun-llama-cpp'
+
+const registry = new ModelRegistry()
+await registry.load('embed', './nomic-embed-text.gguf', { embeddings: true, poolingType: 1 })
+await registry.load('gen',   './qwen3-8b.gguf',         { preset: 'medium' })
+
+console.log(registry.status('embed')) // 'ready'
+
+const pipeline = new ModelPipeline(registry.get('embed'), registry.get('gen'))
+
+// Rerank candidates (retrieved from your vector store)
+const ranked = await pipeline.rerank('search_query: tallest mountain', [
+  'search_document: Mount Everest is 8848 meters tall',
+  'search_document: The Amazon is the largest river',
+])
+// → [{ doc: 'Mount Everest...', score: 0.92 }, { doc: 'The Amazon...', score: 0.41 }]
+
+// Generate answer using top context
+const context = ranked.slice(0, 2).map(r => r.doc).join('\n')
+const result = await pipeline.generate(context, 'What is the tallest mountain?', {
+  maxTokens: 80,
+  onToken: (t) => process.stdout.write(t),
+})
+
+await registry.disposeAll()
+```
+
+`assertCapability(model, 'embed' | 'generate')` throws `CapabilityMismatchError` with an actionable message if the model lacks the required capability. Errors carry a `code` for programmatic handling: `CAPABILITY_MISMATCH`, `MODEL_NOT_FOUND`.
+
 ### `llm.metadata`
 
 Model info populated after `load()` — no extra call needed.
@@ -166,9 +249,9 @@ The C shim exists because `bun:ffi` cannot pass C structs by value. It wraps lla
 
 See [docs/strategy.md](docs/strategy.md) for the full roadmap:
 
-- Embeddings & ranking support
-- Parallel sequences (multi-user inference)
-- Multi-model orchestration
+- ✅ Embeddings & ranking support
+- ✅ Parallel sequences (multi-user inference)
+- ✅ Multi-model orchestration
 - Grammar/JSON mode
 - Speculative decoding
 
