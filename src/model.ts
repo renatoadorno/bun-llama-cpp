@@ -6,6 +6,7 @@ import type {
   InferResult,
   FimTokens,
   ModelMetadata,
+  ModelCapabilities,
   ChatMessage,
   ParallelInferResult,
   WorkerRequest,
@@ -258,6 +259,15 @@ export class LlamaModel {
 
   /** Model metadata — populated during load(). */
   get metadata(): ModelMetadata { return this._metadata }
+
+  /** Returns the capability profile of this model instance. */
+  get capabilities(): ModelCapabilities {
+    return {
+      isEmbedder: this._embeddingMode,
+      supportsParallel: this._nSeqMax > 1,
+      maxParallelSequences: this._nSeqMax,
+    }
+  }
 
   /** Get Fill-in-Middle token IDs. Returns -1 for unsupported tokens. */
   async getFimTokens(): Promise<FimTokens> {
