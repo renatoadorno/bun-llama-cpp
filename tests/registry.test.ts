@@ -42,10 +42,16 @@ describe('ModelRegistry', () => {
   test('concurrent load() for same name deduplicates to one instance', async () => {
     const p1 = registry.load('nomic2', EMBED_PATH, EMBED_CFG)
     const p2 = registry.load('nomic2', EMBED_PATH, EMBED_CFG)
-    await Promise.all([p1, p2])
+
+    await p1
+    const modelAfterFirstLoad = registry.get('nomic2')
+
+    await p2
+    const modelAfterSecondLoad = registry.get('nomic2')
+
     expect(registry.status('nomic2')).toBe('ready')
-    // Both paths resolve to the same object
-    expect(registry.get('nomic2')).toBe(registry.get('nomic2'))
+    // Capture references independently so the assertion can detect replacement.
+    expect(modelAfterFirstLoad).toBe(modelAfterSecondLoad)
     await registry.unload('nomic2')
   }, 120_000)
 

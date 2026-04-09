@@ -145,7 +145,8 @@ const results = await llm.inferParallel([
   { prompt: 'Translate to Spanish: Hello', onToken: (t) => process.stdout.write(t) },
 ])
 
-// Concurrent queue: requests are serialized but overlap during execution
+// With nSeqMax > 1, infer() bypasses the serial queue and runs concurrently
+// via the batch engine — multiple requests execute in parallel on the GPU
 await Promise.all([
   llm.infer('Prompt A', { onToken: (t) => process.stdout.write(t) }),
   llm.infer('Prompt B', { onToken: (t) => process.stdout.write(t) }),
@@ -161,7 +162,7 @@ Use `llm.warmup(systemPrompt)` to pre-compute the KV cache for a shared system p
 `ModelRegistry` manages multiple models by name. `ModelPipeline` orchestrates embed → rerank → generate without owning a vector store:
 
 ```ts
-import { ModelRegistry, ModelPipeline, assertCapability } from 'bun-llama-cpp'
+import { ModelRegistry, ModelPipeline, assertCapability } from '@renatoadorno/bun-llama-cpp'
 
 const registry = new ModelRegistry()
 await registry.load('embed', './nomic-embed-text.gguf', { embeddings: true, poolingType: 1 })

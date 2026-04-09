@@ -22,7 +22,9 @@ export class ModelRegistry {
     if (existing) { await existing; return }
 
     this._statuses.set(name, 'loading')
-    if (!this._loadOrder.includes(name)) this._loadOrder.push(name)
+    // Remove any stale entry and re-push so reload order reflects latest load time
+    this._loadOrder = this._loadOrder.filter(n => n !== name)
+    this._loadOrder.push(name)
 
     const promise = LlamaModel.load(path, config)
     this._loading.set(name, promise)
@@ -68,11 +70,32 @@ export class ModelRegistry {
 
   /** Dispose and remove a model by name. No-op if not loaded. */
   async unload(name: string): Promise<void> {
+    // If the model is currently loading, wait for it to finish then dispose.
+    // Without this, calling unload() during load() silently leaves a live Worker.
+    const inFlight = this._loading.get(name)
+    if (inFlight) {
+      try {
+        const model = await inFlight
+        this._models.delete(name)
+        this._statuses.delete(name)
+        this._errors.delete(name)
+        this._loadOrder = this._loadOrder.filter(n => n !== name)
+        await model.dispose()
+      } catch {
+        // Load failed; clear any error state left by load()
+        this._statuses.delete(name)
+        this._errors.delete(name)
+        this._loadOrder = this._loadOrder.filter(n => n !== name)
+      }
+      return
+    }
+
     const model = this._models.get(name)
     if (model) {
       this._models.delete(name)
       this._statuses.delete(name)
       this._errors.delete(name)
+      this._loadOrder = this._loadOrder.filter(n => n !== name)
       await model.dispose()
     }
   }
